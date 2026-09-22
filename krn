@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+GOCACHE="${KRN_GOCACHE:-${TMPDIR:-/tmp}/krn-gocache}"
+export GOCACHE
+exec go run . "$@"

@@ -1,0 +1,12 @@
+.DS_Store
+
+# Local build/test outputs
+/bin/
+/dist/
+/krn-bin
+/krn-*
+/coverage.out
+*.test
+
+# KRn repository-private runtime state belongs under .git/krn.
+/.kern/local.json

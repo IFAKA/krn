@@ -42,6 +42,7 @@ type evalReport struct {
 type evalTelemetry struct {
 	Tokens        int64
 	TokensKnown   bool
+	TotalSeen     bool
 	PeakContext   int64
 	ContextKnown  bool
 	Tools         int
@@ -135,28 +136,24 @@ func runEvalVariant(v evalVariant) (evalMetric, error) {
 	meta := map[string]any{"variant": v.Variant, "repo": v.Repo, "task": v.Task, "verification": v.Verify, "model": v.Model, "reasoning_effort": v.Effort, "started": time.Now().UTC().Format(time.RFC3339Nano)}
 	metaBytes, _ := json.MarshalIndent(meta, "", "  ")
 	_ = os.WriteFile(filepath.Join(v.Evidence, "metadata.json"), append(metaBytes, '\n'), 0600)
-	cmdArgs := []string{"exec", "--json", "--ephemeral", "--ignore-user-config", "--sandbox", "workspace-write", "--approve-for-me", "-C", v.Repo}
-	if v.Model != "" {
-		cmdArgs = append(cmdArgs, "--model", v.Model)
-	}
-	if v.Effort != "" {
-		cmdArgs = append(cmdArgs, "-c", `model_reasoning_effort="`+v.Effort+`"`)
-	}
-	cmdArgs = append(cmdArgs, v.Task)
+	cmdArgs := evalCodexArgs(v.Repo, v.Model, v.Effort)
 	cmd := exec.Command(v.Codex, cmdArgs...)
 	cmd.Dir = v.Repo
+	cmd.Stdin = strings.NewReader(v.Task)
+	codexHome, err := os.MkdirTemp("", "krn-eval-codex-home-")
+	if err != nil {
+		return evalMetric{}, err
+	}
+	defer os.RemoveAll(codexHome)
+	if err := prepareEvalCodexHome(codexHome, os.Getenv("CODEX_HOME")); err != nil {
+		return evalMetric{}, err
+	}
 	if v.Variant == "B-codex-plus-krn" {
-		codexHome := filepath.Join(v.Evidence, "codex-home")
-		if err := os.MkdirAll(codexHome, 0700); err != nil {
-			return evalMetric{}, err
-		}
 		if err := os.WriteFile(filepath.Join(codexHome, "AGENTS.md"), []byte(codexText+"\n"), 0600); err != nil {
 			return evalMetric{}, err
 		}
-		cmd.Env = append(os.Environ(), "CODEX_HOME="+codexHome)
-	} else {
-		cmd.Env = append(os.Environ(), "CODEX_HOME="+filepath.Join(v.Evidence, "codex-home"))
 	}
+	cmd.Env = append(os.Environ(), "CODEX_HOME="+codexHome)
 	start := time.Now()
 	var stdout, stderrBuffer strings.Builder
 	cmd.Stdout = &stdout
@@ -180,6 +177,38 @@ func runEvalVariant(v evalVariant) (evalMetric, error) {
 	}
 	m := evalMetric{VerifiedCompletion: verificationCode == 0 && codexCode == 0, CodexTokens: unavailableInt(telemetry.Tokens, telemetry.TokensKnown), PeakCodexContext: unavailableInt(telemetry.PeakContext, telemetry.ContextKnown), WallTimeMS: wall, ToolExecutions: telemetry.Tools, HumanInterventions: telemetry.Interventions, CodexExitCode: codexCode, VerificationExit: verificationCode, Verification: verification}
 	return m, nil
+}
+
+func prepareEvalCodexHome(destination, configuredHome string) error {
+	if err := os.MkdirAll(destination, 0700); err != nil {
+		return err
+	}
+	if configuredHome == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return err
+		}
+		configuredHome = filepath.Join(home, ".codex")
+	}
+	auth, err := os.ReadFile(filepath.Join(configuredHome, "auth.json"))
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read Codex auth: %w", err)
+	}
+	return os.WriteFile(filepath.Join(destination, "auth.json"), auth, 0600)
+}
+
+func evalCodexArgs(repo, model, effort string) []string {
+	args := []string{"exec", "--json", "--ephemeral", "--ignore-user-config", "--approve-for-me", "--skip-git-repo-check", "-C", repo}
+	if model != "" {
+		args = append(args, "--model", model)
+	}
+	if effort != "" {
+		args = append(args, "-c", `model_reasoning_effort="`+effort+`"`)
+	}
+	return args
 }
 
 func saveEvalWorkingTree(repo, evidence string) {
@@ -238,14 +267,16 @@ func walkEvalJSON(value any, t *evalTelemetry, parent string) {
 			if n, ok := numberValue(v); ok {
 				switch key {
 				case "total_tokens":
-					t.Tokens, t.TokensKnown = n, true
+					t.Tokens, t.TokensKnown, t.TotalSeen = n, true, true
 				case "input_tokens":
-					if !t.TokensKnown {
+					if !t.TotalSeen {
 						t.Tokens += n
+						t.TokensKnown = true
 					}
 				case "output_tokens":
-					if !t.TokensKnown {
+					if !t.TotalSeen {
 						t.Tokens += n
+						t.TokensKnown = true
 					}
 				case "peak_context_tokens", "context_used_tokens", "context_tokens":
 					if n > t.PeakContext {
@@ -272,6 +303,10 @@ func walkEvalJSON(value any, t *evalTelemetry, parent string) {
 
 func numberValue(v any) (int64, bool) {
 	switch n := v.(type) {
+	case int:
+		return int64(n), true
+	case int64:
+		return n, true
 	case float64:
 		return int64(n), true
 	case json.Number:

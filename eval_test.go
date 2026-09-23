@@ -55,13 +55,59 @@ func TestEvalTelemetryAndUnavailableMetrics(t *testing.T) {
 	if got := unavailableInt(0, false); got != "unavailable" {
 		t.Fatalf("unavailable metric became %v", got)
 	}
+	usage := parseEvalTelemetry([]byte(`{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":3}}`))
+	if !usage.TokensKnown || usage.Tokens != 13 {
+		t.Fatalf("input/output usage was not measured: %+v", usage)
+	}
+}
+
+func TestEvalCodexArgsAreCompatibleWithCurrentCLI(t *testing.T) {
+	args := evalCodexArgs("/tmp/repo", "gpt-test", "medium")
+	for _, arg := range args {
+		if arg == "--sandbox" {
+			t.Fatalf("eval must use --approve-for-me's workspace-write mode: args=%v", args)
+		}
+	}
+	if !containsString(args, "--approve-for-me") {
+		t.Fatalf("eval must route approvals non-interactively: args=%v", args)
+	}
+	if !containsString(args, "--skip-git-repo-check") {
+		t.Fatalf("eval must support fresh temporary clones: args=%v", args)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestPrepareEvalCodexHomeCopiesOnlyAuth(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "auth.json"), []byte("credential"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(t.TempDir(), "codex-home")
+	if err := prepareEvalCodexHome(home, source); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(home, "auth.json"))
+	if err != nil || string(got) != "credential" {
+		t.Fatalf("auth was not copied: %q %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(home, "config.toml")); !os.IsNotExist(err) {
+		t.Fatalf("unexpected config copied into isolated home: %v", err)
+	}
 }
 
 func TestEvalReportDeltasPreserveUnavailableValues(t *testing.T) {
-	a := evalMetric{VerifiedCompletion: false, CodexTokens: "unavailable", PeakCodexContext: int64(40), WallTimeMS: 100, ToolExecutions: 3, HumanInterventions: 0}
+	a := evalMetric{VerifiedCompletion: false, CodexTokens: int64(100), PeakCodexContext: int64(40), WallTimeMS: 100, ToolExecutions: 3, HumanInterventions: 0}
 	b := evalMetric{VerifiedCompletion: true, CodexTokens: int64(200), PeakCodexContext: "unavailable", WallTimeMS: 150, ToolExecutions: 5, HumanInterventions: 1}
 	d := evalDeltas(a, b)
-	want := map[string]any{"verified_completion": "improved", "codex_tokens": "unavailable", "peak_codex_context": "unavailable", "wall_time_ms": int64(50), "tool_executions": 2, "human_interventions": 1}
+	want := map[string]any{"verified_completion": "improved", "codex_tokens": int64(100), "peak_codex_context": "unavailable", "wall_time_ms": int64(50), "tool_executions": 2, "human_interventions": 1}
 	if !reflect.DeepEqual(d, want) {
 		t.Fatalf("delta mismatch: got %#v want %#v", d, want)
 	}

@@ -158,6 +158,7 @@ krn state add constraint|proven|open|negative TEXT
 krn state clear
 krn exec [--verified] [--cache --input PATH ...] -- COMMAND ARGS...
 krn compile [--min N] [--json]
+krn eval --task PATH --verify COMMAND --model MODEL --reasoning-effort EFFORT [--output DIR] [--json]
 krn integrate codex|remove-codex
 krn doctor
 krn uninstall
@@ -168,6 +169,25 @@ The Codex integration is intentionally instruction-based. It does not install pr
 Codex should skip KRn for trivial answers, single known-file edits, direct user-specified commands, or when a normal tool call is cheaper than consulting KRn. This keeps the default integration small and fail-open while still making automatic use operationally clear.
 
 `--cache` requires at least one `--input`.
+
+### End-to-end A/B evaluation
+
+`krn eval` is a separate experiment from `benchmark.sh`. It evaluates the same task twice from fresh clones of the same committed `HEAD`:
+
+* A: Codex alone, with isolated Codex state.
+* B: the same Codex invocation plus the current KRn routing policy in isolated Codex instructions.
+
+Example:
+
+```sh
+krn eval --task task.txt --verify 'go test ./...' --model MODEL --reasoning-effort high --json
+```
+
+The harness preserves each prompt, metadata, Codex JSONL stdout, stderr, verification output, and a `report.json` under `.git/krn/evals/` (or `--output DIR`). The report measures verified completion, wall time, tool/execution events, and human-intervention events. Codex token totals and peak context are reported as `unavailable` unless the CLI JSONL contains explicit usage fields; the harness never estimates them from output size. Deltas involving unavailable values are also `unavailable`.
+
+The verifier is run after Codex exits in each fresh checkout. A run is verified complete only when both Codex and the explicit verifier succeed. The command is non-interactive and uses automatic approval, so human interventions are counted from explicit intervention events in the event stream; this is not a substitute for measuring an interactive operator.
+
+`benchmark.sh` remains the deterministic KRn cache-mechanism benchmark and is not replaced by this end-to-end experiment.
 
 The cache key includes the exact argv, repository root, cache schema, canonicalized dependencies, and content fingerprints of every declared input.
 

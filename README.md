@@ -70,66 +70,48 @@ KRn provides small, recoverable interfaces for deterministic work that can be re
 ## How it works
 
 ```text
-+------------------+
-|       TASK       |
-+------------------+
-         |
-         v
-+------------------+
-|   RECONSTRUCT    |
-+------------------+
-         |
-         v
-+------------------+
-| MINIMUM EVIDENCE |
-+------------------+
-         |
-         +-------------------------+
-         |                         |
-         v                         v
-+--------------------+    +-----------------+
-| DETERMINISTIC WORK |    | CODEX REASONING |
-+--------------------+    +-----------------+
-         |                         |
-         +------------+------------+
-                      |
-                      v
-              +--------------+
-              |    VERIFY    |
-              +--------------+
-                      |
-                      v
-              +--------------+
-              |    RECORD    |
-              +--------------+
-                      |
-         +------------+------------+
-         |                         |
-         v                         v
-+------------------+      +------------------+
-|      CACHE       |      |     METRICS      |
-+------------------+      +------------------+
-         |
-         v
-+------------------+
-|  VERIFIED REUSE  |
-+------------------+
-         |
-         v
-+-----------------------------+
-| SUCCESSFUL EXACT EXECUTIONS |
-+-----------------------------+
-         |
-         v
-+------------------+
-|     COMPILE      |
-+------------------+
-         |
-         v
-+-----------------------+
-| REVIEW CANDIDATE ONLY |
-+-----------------------+
+TASK                         user asks Codex to do work
+  |
+  v
+RECONSTRUCT                  rebuild repo facts from Git, files, and state
+  |
+  v
+MINIMUM EVIDENCE             retrieve only the evidence needed now
+  |
+  +---------------------------+
+  |                           |
+  v                           v
+DETERMINISTIC WORK       CODEX REASONING
+tools prove facts        model judges, plans, and synthesizes
+  |                           |
+  +-------------+-------------+
+                |
+                v
+              VERIFY          run checks or reject uncertain evidence
+                |
+                v
+              RECORD          save local evidence from verified work
+                |
+       +--------+--------+
+       |                 |
+       v                 v
+     CACHE             METRICS
+ reusable results      local measurements
+       |
+       v
+ VERIFIED REUSE               reuse only if command and inputs still match
+       |
+       v
+SUCCESSFUL EXACT EXECUTIONS   repeated verified executions accumulate
+       |
+       v
+     COMPILE                  find exact repeated patterns
+       |
+       v
+REVIEW CANDIDATE ONLY         suggest inspection, never auto-promote
 ```
+
+The main path is conservative: KRn reconstructs what it can, gathers bounded evidence, lets deterministic tools and Codex reasoning meet at verification, and records only verified work. The reuse path is narrower: cached results are reused only while their explicit dependencies still match, and repeated exact executions become review candidates rather than automatic abstractions.
 
 * `context` reconstructs Git root, branch, commit, changed paths, detected ecosystems, and saved task state.
 * `find` uses ripgrep, returns a bounded file/snippet projection, and saves the full search output for recovery.

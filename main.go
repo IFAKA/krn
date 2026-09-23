@@ -17,7 +17,8 @@ import (
 	"time"
 )
 
-const version = "0.2.0"
+const version = "0.3.0"
+const cacheSchema = "2"
 const markerStart = "<!-- KRN:BEGIN -->"
 const markerEnd = "<!-- KRN:END -->"
 const codexText = "KRn is available globally. Prefer deterministic or reconstructable evidence over inference. Use KRn to keep active context minimal. Verify before completion. Persist only irreducible state. Reuse verified deterministic operations when available."
@@ -48,7 +49,7 @@ type cacheRecord struct {
 	Parameters                       []string
 	Dependencies                     []string
 	DependencyFingerprints           map[string]string
-	Result, Log                      string
+	Result, ResultFingerprint, Log   string
 	ExitCode                         int
 	Verified                         bool
 	Created                          string
@@ -142,26 +143,6 @@ func readJSON(path string, v any) error {
 	}
 	return json.Unmarshal(b, v)
 }
-func listFiles(root string, fn func(string, os.FileInfo) bool) []string {
-	var out []string
-	filepath.Walk(root, func(p string, i os.FileInfo, e error) error {
-		if e != nil || i == nil {
-			return nil
-		}
-		if i.IsDir() {
-			if p != root && (i.Name() == ".git" || i.Name() == "node_modules" || i.Name() == "dist" || i.Name() == "build") {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		if fn(p, i) {
-			out = append(out, p)
-		}
-		return nil
-	})
-	sort.Strings(out)
-	return out
-}
 func ecosystem(r repo) []string {
 	names := map[string]string{"package.json": "node", "pnpm-lock.yaml": "node", "yarn.lock": "node", "bun.lockb": "node", "go.mod": "go", "Cargo.toml": "rust", "pom.xml": "maven", "build.gradle": "gradle", "build.gradle.kts": "gradle", "pyproject.toml": "python", "requirements.txt": "python", "MODULE.bazel": "bazel"}
 	seen := map[string]bool{}
@@ -197,8 +178,12 @@ func contextCmd(args []string) error {
 		}
 	}
 	s := stateFile{}
-	_ = readJSON(filepath.Join(r.Private, "state.json"), &s)
+	stateErr := readJSON(filepath.Join(r.Private, "state.json"), &s)
 	v := map[string]any{"root": r.Root, "git_dir": r.GitDir, "head": strings.TrimSpace(head), "branch": strings.TrimSpace(branch), "changed": paths, "ecosystems": ecosystem(r), "state": s}
+	if stateErr != nil && !os.IsNotExist(stateErr) {
+		v["state"] = nil
+		v["state_status"] = "unknown"
+	}
 	if *js {
 		return jsonPrint(v)
 	}
@@ -212,6 +197,9 @@ func contextCmd(args []string) error {
 	if s.Objective != "" {
 		fmt.Println("objective: " + s.Objective)
 	}
+	if stateErr != nil && !os.IsNotExist(stateErr) {
+		fmt.Println("state: unknown (malformed state file)")
+	}
 	return nil
 }
 
@@ -224,6 +212,9 @@ func findCmd(args []string) error {
 	max := f.Int("max-files", 12, "maximum files")
 	if err := f.Parse(args); err != nil {
 		return err
+	}
+	if *max < 0 {
+		return errors.New("max-files must be non-negative")
 	}
 	if f.NArg() == 0 {
 		return errors.New("find requires a query")
@@ -493,7 +484,25 @@ func fileFingerprint(path string) (string, error) {
 		h.Write(b)
 		return hex.EncodeToString(h.Sum(nil)), nil
 	}
-	files := listFiles(path, func(_ string, i os.FileInfo) bool { return i.Mode().IsRegular() })
+	var files []string
+	if e := filepath.Walk(path, func(p string, i os.FileInfo, e error) error {
+		if e != nil {
+			return e
+		}
+		if i.IsDir() {
+			if p != path && (i.Name() == ".git" || i.Name() == "node_modules" || i.Name() == "dist" || i.Name() == "build") {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if i.Mode().IsRegular() {
+			files = append(files, p)
+		}
+		return nil
+	}); e != nil {
+		return "", e
+	}
+	sort.Strings(files)
 	for _, p := range files {
 		rel, _ := filepath.Rel(path, p)
 		h.Write([]byte(rel))
@@ -505,19 +514,17 @@ func fileFingerprint(path string) (string, error) {
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
-func cacheKey(command []string, inputs []string) (string, map[string]string, error) {
+func cacheKeyAtRoot(root string, command []string, inputs []string) (string, map[string]string, error) {
 	h := sha256.New()
-	h.Write([]byte("exec/1\x00"))
+	h.Write([]byte("exec/" + cacheSchema + "\x00"))
+	h.Write([]byte(filepath.Clean(root) + "\x00"))
 	for _, a := range command {
 		h.Write([]byte(a))
 		h.Write([]byte{0})
 	}
 	fps := map[string]string{}
-	for _, p := range inputs {
-		abs := p
-		if !filepath.IsAbs(abs) {
-			abs = filepath.Join(mustRoot(), p)
-		}
+	canonical := canonicalInputs(root, inputs)
+	for _, abs := range canonical {
 		fp, e := fileFingerprint(abs)
 		if e != nil {
 			return "", nil, e
@@ -527,12 +534,23 @@ func cacheKey(command []string, inputs []string) (string, map[string]string, err
 	}
 	return hex.EncodeToString(h.Sum(nil)), fps, nil
 }
-func mustRoot() string {
-	r, e := discover()
-	if e != nil {
-		return "."
+
+func canonicalInputs(root string, inputs []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, p := range inputs {
+		abs := p
+		if !filepath.IsAbs(abs) {
+			abs = filepath.Join(root, p)
+		}
+		abs = filepath.Clean(abs)
+		if !seen[abs] {
+			seen[abs] = true
+			out = append(out, abs)
+		}
 	}
-	return r.Root
+	sort.Strings(out)
+	return out
 }
 func recordMetric(r repo, m metric) {
 	_ = ensure(r)
@@ -569,16 +587,17 @@ func execCmd(args []string) error {
 	if *cache && len(inputs) == 0 {
 		return errors.New("cache requires at least one --input")
 	}
-	key, fps, e := cacheKey(command, inputs)
+	canonical := canonicalInputs(r.Root, inputs)
+	key, fps, e := cacheKeyAtRoot(r.Root, command, canonical)
 	if e != nil {
 		return e
 	}
 	cp := filepath.Join(r.Private, "cache", key+".json")
 	if *cache {
 		var rec cacheRecord
-		if readJSON(cp, &rec) == nil && rec.Key == key && rec.ExitCode == 0 {
+		if readJSON(cp, &rec) == nil && validCacheRecord(rec, key, command, canonical, fps) {
 			fmt.Print(projection([]byte(rec.Result), rec.Log))
-			recordMetric(r, metric{Operation: "exec", Parameters: command, Dependencies: inputs, Result: "success", Verified: rec.Verified, Cached: true})
+			recordMetric(r, metric{Operation: "exec", Parameters: command, Dependencies: canonical, Result: "success", Verified: rec.Verified, Cached: true})
 			return nil
 		}
 	}
@@ -595,12 +614,51 @@ func execCmd(args []string) error {
 		}
 	}
 	fmt.Print(projection(b, log))
-	recordMetric(r, metric{Operation: "exec", Parameters: command, Dependencies: inputs, Result: map[bool]string{true: "success", false: "failure"}[e == nil], Verified: *verified && e == nil, DurationMS: time.Since(start).Milliseconds(), ProjectionBytes: len(projection(b, log))})
+	recordMetric(r, metric{Operation: "exec", Parameters: command, Dependencies: canonical, Result: map[bool]string{true: "success", false: "failure"}[e == nil], Verified: *verified && e == nil, DurationMS: time.Since(start).Milliseconds(), ProjectionBytes: len(projection(b, log))})
 	if *cache && e == nil {
 		_ = os.MkdirAll(filepath.Dir(cp), 0700)
-		_ = writeJSON(cp, cacheRecord{key, "exec", "1", command, inputs, fps, string(b), log, code, *verified, time.Now().UTC().Format(time.RFC3339Nano)})
+		result := string(b)
+		_ = writeJSON(cp, cacheRecord{Key: key, Primitive: "exec", PrimitiveVersion: cacheSchema, Parameters: command, Dependencies: canonical, DependencyFingerprints: fps, Result: result, ResultFingerprint: digest([]byte(result)), Log: log, ExitCode: code, Verified: *verified, Created: time.Now().UTC().Format(time.RFC3339Nano)})
 	}
 	return e
+}
+
+func validCacheRecord(rec cacheRecord, key string, command, inputs []string, fps map[string]string) bool {
+	if rec.Key != key || rec.Primitive != "exec" || rec.PrimitiveVersion != cacheSchema || rec.ExitCode != 0 || rec.Created == "" || rec.Log == "" {
+		return false
+	}
+	if rec.ResultFingerprint == "" || rec.ResultFingerprint != digest([]byte(rec.Result)) {
+		return false
+	}
+	if !sameStrings(rec.Parameters, command) || !sameStrings(rec.Dependencies, inputs) {
+		return false
+	}
+	if len(rec.DependencyFingerprints) != len(fps) {
+		return false
+	}
+	for p, fp := range fps {
+		if rec.DependencyFingerprints[p] != fp {
+			return false
+		}
+	}
+	return true
+}
+
+func digest(b []byte) string {
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 type multiFlag []string
@@ -615,6 +673,9 @@ func compileCmd(args []string) error {
 	if e := f.Parse(args); e != nil {
 		return e
 	}
+	if *min < 1 {
+		return errors.New("min must be positive")
+	}
 	r, e := discover()
 	if e != nil {
 		return e
@@ -627,13 +688,6 @@ func compileCmd(args []string) error {
 		}
 		return e
 	}
-	type group struct {
-		Command      []string
-		Count        int
-		Verified     bool
-		Dependencies map[string]bool
-	}
-	groups := map[string]*group{}
 	var records []metric
 	sc := bufio.NewScanner(strings.NewReader(string(b)))
 	for sc.Scan() {
@@ -642,26 +696,8 @@ func compileCmd(args []string) error {
 			continue
 		}
 		records = append(records, m)
-		k := strings.Join(m.Parameters, "\x00")
-		g := groups[k]
-		if g == nil {
-			g = &group{Command: m.Parameters, Dependencies: map[string]bool{}}
-			groups[k] = g
-		}
-		g.Count++
-		g.Verified = g.Verified || m.Verified
-		for _, d := range m.Dependencies {
-			g.Dependencies[d] = true
-		}
 	}
-	var out []any
-	for _, g := range groups {
-		if g.Count >= *min && g.Verified {
-			out = append(out, map[string]any{"status": "candidate", "operation": "exec", "parameters": g.Command, "repetitions": g.Count, "dependencies": sortedKeys(g.Dependencies), "reason": "repeated verified deterministic execution; candidate for parameterization/composition"})
-		}
-	}
-	out = append(out, parameterCandidates(records, *min)...)
-	sort.Slice(out, func(i, j int) bool { return fmt.Sprint(out[i]) < fmt.Sprint(out[j]) })
+	out := exactCandidates(records, *min, r.Root)
 	if *js {
 		return jsonPrint(map[string]any{"candidates": out, "promoted": false})
 	}
@@ -676,52 +712,41 @@ func compileCmd(args []string) error {
 	return nil
 }
 
-func parameterCandidates(records []metric, min int) []any {
-	type candidate struct {
-		Prefix   []string
-		Values   map[string]bool
-		Verified bool
+func exactCandidates(records []metric, min int, root string) []any {
+	type group struct {
+		Command      []string
+		Count        int
+		Dependencies []string
 	}
-	groups := map[string]*candidate{}
+	groups := map[string]*group{}
 	for _, m := range records {
-		if len(m.Parameters) < 3 || !parameterizable(m.Parameters[0]) {
+		if m.Operation != "exec" || m.Result != "success" || !m.Verified {
 			continue
 		}
-		prefix := m.Parameters[:len(m.Parameters)-1]
-		key := strings.Join(prefix, "\x00")
+		deps := canonicalInputs(root, m.Dependencies)
+		if len(deps) == 0 {
+			continue
+		}
+		keyBytes, _ := json.Marshal(struct {
+			Command      []string `json:"command"`
+			Dependencies []string `json:"dependencies"`
+		}{m.Parameters, deps})
+		key := string(keyBytes)
 		g := groups[key]
 		if g == nil {
-			g = &candidate{Prefix: append([]string(nil), prefix...), Values: map[string]bool{}}
+			g = &group{Command: append([]string(nil), m.Parameters...), Dependencies: deps}
 			groups[key] = g
 		}
-		g.Values[m.Parameters[len(m.Parameters)-1]] = true
-		g.Verified = g.Verified || m.Verified
+		g.Count++
 	}
 	var out []any
 	for _, g := range groups {
-		if len(g.Values) < min || !g.Verified {
-			continue
+		if g.Count >= min {
+			out = append(out, map[string]any{"status": "candidate", "operation": "exec", "parameters": g.Command, "repetitions": g.Count, "dependencies": g.Dependencies, "reason": "repeated exact command with explicit dependencies; review required; no automatic promotion"})
 		}
-		values := sortedKeys(g.Values)
-		out = append(out, map[string]any{"status": "candidate", "operation": strings.Join(g.Prefix, " ") + "(scope)", "parameters": values, "repetitions": len(values), "reason": "same verified operation with a varying final scope parameter"})
 	}
+	sort.Slice(out, func(i, j int) bool { return fmt.Sprint(out[i]) < fmt.Sprint(out[j]) })
 	return out
-}
-
-func parameterizable(command string) bool {
-	switch command {
-	case "npm", "pnpm", "yarn", "bun", "cargo", "go":
-		return true
-	}
-	return false
-}
-func sortedKeys(m map[string]bool) []string {
-	var a []string
-	for k := range m {
-		a = append(a, k)
-	}
-	sort.Strings(a)
-	return a
 }
 
 func integrateCmd(args []string) error {

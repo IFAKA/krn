@@ -96,7 +96,7 @@ This does not make Codex passive or guarantee fewer tokens. It gives Codex small
 - `find` uses ripgrep, returns a bounded file/snippet projection, and saves the full search output for recovery.
 - `verify` discovers safe project-native checks from `.kern/config.json`, `package.json`, Go, Cargo, or pytest. Unknown projects remain `unknown`; KRn does not invent a command.
 - `exec` runs structured local commands, bounds output shown to the caller, records metrics, and can cache only executions with explicit input dependencies.
-- `compile` reads successful trajectories and emits conservative candidates for repeated verified commands or a varying final scope parameter. It never promotes or executes candidates automatically.
+- `compile` reads successful trajectories and emits review-only candidates for repeated exact commands with explicit dependencies. It never parameterizes, promotes, or executes candidates automatically.
 
 The implementation is fail-open around uncertain reconstruction: it reports unavailable or unknown evidence rather than manufacturing a result.
 
@@ -133,7 +133,7 @@ krn doctor
 krn uninstall
 ```
 
-`--cache` requires at least one `--input`. A changed declared input changes the cache key; unknown side effects are never cached implicitly. `--verified` records that an externally verified successful execution may be considered by `compile`.
+`--cache` requires at least one `--input`. The cache key includes the exact argv, repository root, schema, and canonicalized content fingerprints of every declared input. A changed declared input, command, repository root, malformed record, tampered result, or provenance mismatch is a cache miss. Unknown side effects are never inferred safe; callers must declare the inputs that make the command reusable. `--verified` is an external assertion recorded for review candidates, not proof of semantic equivalence.
 
 ## Storage and privacy
 
@@ -160,7 +160,7 @@ KRn combines ideas supported by research across context optimization, retrieval,
 | Do not assume one retrieval family is universally best | KRn uses ripgrep and explicit repository facts by default; it does not install embeddings, a vector database, or a repository map without workload evidence. | **[Agent Retrieval Bench: Evaluating Repository Context Retrieval for Coding Agents — Bowen Qin and Yi Xie, 2026, arXiv preprint](https://arxiv.org/abs/2607.24882)** — On 427 samples from 25 repositories, lexical, RepoMap, embedding, and agent-context methods win on different metrics and tasks; no family dominates. |
 | Context externalization and compression | Long trajectories make irrelevant history expensive; KRn stores full evidence locally and exposes bounded projections. | **[ACON: Optimizing Context Compression for Long-horizon LLM Agents — Minki Kang et al., 2026, Lifelong Agent @ ICLR 2026 workshop](https://openreview.net/forum?id=x0alNh5o8v)** — Reports 26–54% lower peak tokens on AppWorld, OfficeBench, and Multi-objective QA while largely preserving task performance; KRn does not claim those results for itself. |
 | Dependency-aware caching and invalidation | Recompute only when declared inputs change, while keeping dependency structure explicit. | **[Build Systems à la Carte — Andrey Mokhov, Neil Mitchell, and Simon Peyton Jones, 2018, ICFP](https://doi.org/10.1145/3236774)** — Separates dependency and rebuild decisions and analyzes persistent build information, motivating explicit input fingerprints and conservative cache reuse. |
-| Conservative reusable abstractions | Repeated verified operations are candidates for parameterization, but generalization must remain reviewable. | **[DreamCoder: Bootstrapping Inductive Program Synthesis with Wake-Sleep Library Learning — Kevin Ellis et al., 2021, PLDI](https://doi.org/10.1145/3453483.3454080)** — Shows library learning can capture recurring program structure and improve later synthesis; it does not show that KRn can generalize arbitrary enterprise Codex trajectories. |
+| Conservative reusable abstractions | KRn reports exact-command repetition for review but does not generalize or promote arbitrary trajectories. | **[DreamCoder: Bootstrapping Inductive Program Synthesis with Wake-Sleep Library Learning — Kevin Ellis et al., 2021, PLDI](https://doi.org/10.1145/3453483.3454080)** — Studies library learning inside a defined synthesis language and domain; it does not justify generalizing arbitrary enterprise Codex trajectories. |
 | Minimal scaffolding | Additional agent machinery is not automatically an improvement, so KRn keeps the default substrate small and local. | **[ContextBench: A Benchmark for Context Retrieval in Coding Agents — Han Li et al., 2026, arXiv preprint](https://arxiv.org/abs/2602.05892)** — Finds sophisticated scaffolding gives only marginal retrieval gains in its evaluated setting, supporting a measured-complexity policy rather than a universal claim against scaffolding. |
 
 ## Evidence status
@@ -171,7 +171,7 @@ The sources above support bounded context, careful retrieval evaluation, context
 
 ### Implemented KRn mechanisms
 
-The source and tests establish bounded projections, local recoverable logs, fail-open verification discovery, explicit-input content-keyed caching, JSONL metrics, marker-based idempotent Codex integration, and conservative compiler candidates. `go test ./...` is the executable check for these local behaviors.
+The source and tests establish bounded projections, local recoverable logs, fail-open verification discovery, canonicalized and provenance-checked explicit-input caching, JSONL metrics, marker-based idempotent Codex integration, and exact-command review candidates. `go test ./...` is the executable check for these local behaviors.
 
 ### KRn-specific hypotheses
 
@@ -179,7 +179,7 @@ KRn's central hypothesis remains unproven until a reproducible benchmark covers 
 
 > Moving recurring verified operations from model cognition into deterministic or reusable computation will reduce cognition and context required per verified useful outcome.
 
-`benchmark.sh` is a small local falsification harness for observable command executions and cache reuse. It is not evidence that KRn is optimal, nor evidence of a particular token reduction.
+`benchmark.sh` is a local falsification harness covering unchanged and changed dependencies, unrelated files, successful and failed execution, different applicability, and malformed cache records. It measures command executions and cache hits only. It is not evidence that KRn is optimal, nor evidence of a particular token reduction.
 
 ## What KRn deliberately does not do
 

@@ -43,6 +43,61 @@ func TestFileFingerprintChangesOnlyDeclaredInput(t *testing.T) {
 	}
 }
 
+func TestCacheKeyCanonicalizesDependencyOrderAndDuplicates(t *testing.T) {
+	d := t.TempDir()
+	a := filepath.Join(d, "a.txt")
+	b := filepath.Join(d, "b.txt")
+	if err := os.WriteFile(a, []byte("a"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b, []byte("b"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	one, fpsOne, err := cacheKeyAtRoot(d, []string{"printf", "ok"}, []string{"b.txt", "a.txt", "a.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, fpsTwo, err := cacheKeyAtRoot(d, []string{"printf", "ok"}, []string{"a.txt", "b.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one != two || len(fpsOne) != 2 || len(fpsTwo) != 2 {
+		t.Fatalf("dependency canonicalization failed: %q %q %#v %#v", one, two, fpsOne, fpsTwo)
+	}
+}
+
+func TestMalformedOrMismatchedCacheRecordIsRejected(t *testing.T) {
+	fps := map[string]string{"/repo/input.txt": "hash"}
+	base := cacheRecord{
+		Key: "key", Primitive: "exec", PrimitiveVersion: cacheSchema,
+		Parameters: []string{"printf", "ok"}, Dependencies: []string{"/repo/input.txt"},
+		DependencyFingerprints: fps, Result: "ok", ResultFingerprint: digest([]byte("ok")), Log: "/repo/run.log", ExitCode: 0, Created: "now",
+	}
+	if !validCacheRecord(base, "key", base.Parameters, base.Dependencies, fps) {
+		t.Fatal("valid cache record rejected")
+	}
+	bad := base
+	bad.DependencyFingerprints = map[string]string{"/repo/input.txt": "wrong"}
+	if validCacheRecord(bad, "key", base.Parameters, base.Dependencies, fps) {
+		t.Fatal("stale dependency fingerprint accepted")
+	}
+	bad = base
+	bad.Parameters = []string{"printf", "different"}
+	if validCacheRecord(bad, "key", base.Parameters, base.Dependencies, fps) {
+		t.Fatal("different command accepted")
+	}
+	bad = base
+	bad.PrimitiveVersion = "1"
+	if validCacheRecord(bad, "key", base.Parameters, base.Dependencies, fps) {
+		t.Fatal("old cache schema accepted")
+	}
+	bad = base
+	bad.Result = "tampered"
+	if validCacheRecord(bad, "key", base.Parameters, base.Dependencies, fps) {
+		t.Fatal("tampered cached result accepted")
+	}
+}
+
 func TestIntegrationPreservesUserContentAndIsIdempotent(t *testing.T) {
 	d := t.TempDir()
 	t.Setenv("CODEX_HOME", d)
@@ -85,31 +140,41 @@ func TestMalformedStateFailsClosedAtReader(t *testing.T) {
 	}
 }
 
-func TestCompilerRecognizesScopedRepetitionConservatively(t *testing.T) {
+func TestCompilerRecognizesOnlyExactRepetition(t *testing.T) {
 	records := []metric{
-		{Operation: "exec", Parameters: []string{"npm", "test", "auth"}, Result: "success", Verified: true},
-		{Operation: "exec", Parameters: []string{"npm", "test", "cart"}, Result: "success", Verified: true},
-		{Operation: "exec", Parameters: []string{"npm", "test", "checkout"}, Result: "success", Verified: true},
+		{Operation: "exec", Parameters: []string{"printf", "ok"}, Dependencies: []string{"input.txt"}, Result: "success", Verified: true},
+		{Operation: "exec", Parameters: []string{"printf", "ok"}, Dependencies: []string{"input.txt"}, Result: "success", Verified: true},
+		{Operation: "exec", Parameters: []string{"printf", "ok"}, Dependencies: []string{"input.txt"}, Result: "success", Verified: true},
 	}
-	got := parameterCandidates(records, 3)
+	got := exactCandidates(records, 3, "/repo")
 	if len(got) != 1 {
 		t.Fatalf("got %d candidates, want one", len(got))
 	}
-	if got[0].(map[string]any)["operation"] != "npm test(scope)" {
+	if got[0].(map[string]any)["operation"] != "exec" {
 		t.Fatalf("unexpected candidate: %#v", got[0])
 	}
 }
 
-func TestCompilerDoesNotMergeDifferentPrefixes(t *testing.T) {
+func TestCompilerDoesNotMergeDifferentCommandsOrDependencies(t *testing.T) {
 	records := []metric{
-		{Operation: "exec", Parameters: []string{"npm", "test", "auth"}, Result: "success", Verified: true},
-		{Operation: "exec", Parameters: []string{"npm", "test", "cart"}, Result: "success", Verified: true},
-		{Operation: "exec", Parameters: []string{"npm", "lint", "auth"}, Result: "success", Verified: true},
-		{Operation: "exec", Parameters: []string{"npm", "lint", "cart"}, Result: "success", Verified: true},
+		{Operation: "exec", Parameters: []string{"printf", "ok"}, Dependencies: []string{"a"}, Result: "success", Verified: true},
+		{Operation: "exec", Parameters: []string{"printf", "ok"}, Dependencies: []string{"b"}, Result: "success", Verified: true},
+		{Operation: "exec", Parameters: []string{"printf", "different"}, Dependencies: []string{"a"}, Result: "success", Verified: true},
+		{Operation: "exec", Parameters: []string{"printf", "different"}, Dependencies: []string{"b"}, Result: "success", Verified: true},
 	}
-	got := parameterCandidates(records, 3)
-	if len(got) != 0 {
+	if got := exactCandidates(records, 3, "/repo"); len(got) != 0 {
 		t.Fatalf("merged semantically different operations: %#v", got)
+	}
+}
+
+func TestCompilerRequiresVerifiedExplicitDependencies(t *testing.T) {
+	records := []metric{
+		{Operation: "exec", Parameters: []string{"printf", "ok"}, Result: "success", Verified: true},
+		{Operation: "exec", Parameters: []string{"printf", "ok"}, Dependencies: []string{"input.txt"}, Result: "success", Verified: false},
+		{Operation: "exec", Parameters: []string{"printf", "ok"}, Dependencies: []string{"input.txt"}, Result: "failure", Verified: true},
+	}
+	if got := exactCandidates(records, 1, "/repo"); len(got) != 0 {
+		t.Fatalf("accepted unproven execution: %#v", got)
 	}
 }
 

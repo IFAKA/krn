@@ -70,39 +70,65 @@ KRn provides small, recoverable interfaces for deterministic work that can be re
 ## How it works
 
 ```text
-                         TASK
-                           │
-                           ▼
-                      RECONSTRUCT
-                           │
-                           ▼
-                   MINIMUM EVIDENCE
-                     │             │
-                     ▼             ▼
-              DETERMINISTIC     CODEX
-                 WORK          REASONING
-                     │             │
-                     └──────┬──────┘
-                            ▼
-                          VERIFY
-                            │
-                            ▼
-                          RECORD
-                     │             │
-                     ▼             ▼
-                   CACHE         METRICS
-                     │
-                     ▼
-               VERIFIED REUSE
-                     │
-                     ▼
-          SUCCESSFUL EXACT EXECUTIONS
-                     │
-                     ▼
-                  COMPILE
-                     │
-                     ▼
-             REVIEW CANDIDATE ONLY
++------------------+
+|       TASK       |
++------------------+
+         |
+         v
++------------------+
+|   RECONSTRUCT    |
++------------------+
+         |
+         v
++------------------+
+| MINIMUM EVIDENCE |
++------------------+
+         |
+         +-------------------------+
+         |                         |
+         v                         v
++--------------------+    +-----------------+
+| DETERMINISTIC WORK |    | CODEX REASONING |
++--------------------+    +-----------------+
+         |                         |
+         +------------+------------+
+                      |
+                      v
+              +--------------+
+              |    VERIFY    |
+              +--------------+
+                      |
+                      v
+              +--------------+
+              |    RECORD    |
+              +--------------+
+                      |
+         +------------+------------+
+         |                         |
+         v                         v
++------------------+      +------------------+
+|      CACHE       |      |     METRICS      |
++------------------+      +------------------+
+         |
+         v
++------------------+
+|  VERIFIED REUSE  |
++------------------+
+         |
+         v
++-----------------------------+
+| SUCCESSFUL EXACT EXECUTIONS |
++-----------------------------+
+         |
+         v
++------------------+
+|     COMPILE      |
++------------------+
+         |
+         v
++-----------------------+
+| REVIEW CANDIDATE ONLY |
++-----------------------+
 ```
 
 * `context` reconstructs Git root, branch, commit, changed paths, detected ecosystems, and saved task state.

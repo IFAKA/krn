@@ -21,7 +21,17 @@ const version = "0.3.0"
 const cacheSchema = "2"
 const markerStart = "<!-- KRN:BEGIN -->"
 const markerEnd = "<!-- KRN:END -->"
-const codexText = "KRn is available globally. Prefer deterministic or reconstructable evidence over inference. Use KRn to keep active context minimal. Verify before completion. Persist only irreducible state. Reuse verified deterministic operations when available."
+const codexText = `KRn is available globally. Use it only when it is likely to reduce model context, repeated exploration, or unreconstructable reasoning.
+
+Routing:
+- For repository/code-change tasks that need orientation or may benefit from prior KRn state, start with ` + "`krn context --json`" + `.
+- Before broad file reading or repeated search, prefer ` + "`krn find QUERY --json --max-files N`" + ` for bounded evidence with a recoverable full log.
+- For verification, prefer ` + "`krn verify --level fast|full --json`" + ` when its discovered checks fit the task; otherwise run the project-native focused command directly.
+- Use ` + "`krn exec --cache --input PATH ... -- COMMAND ...`" + ` only for deterministic repeated commands with explicit input dependencies; add ` + "`--verified`" + ` only after an external check verified the result.
+- Use ` + "`krn state`" + ` only for irreducible durable facts: objective, constraints, proven facts, open questions, or negative results that are not cheaply reconstructable from Git/files/tests.
+- Use ` + "`krn compile`" + ` only when reviewing repeated verified trajectories for reusable deterministic operations.
+
+Skip KRn for trivial answers, single known-file edits, direct user-specified commands, or when a normal tool call is cheaper than consulting KRn. Do not dump large KRn logs into context; use bounded projections and paths to recover details only when needed.`
 
 type repo struct{ Root, GitDir, Private string }
 type stateFile struct {
@@ -210,6 +220,7 @@ func findCmd(args []string) error {
 	f := flag.NewFlagSet("find", flag.ContinueOnError)
 	js := f.Bool("json", false, "json")
 	max := f.Int("max-files", 12, "maximum files")
+	args = normalizeFindArgs(args)
 	if err := f.Parse(args); err != nil {
 		return err
 	}
@@ -281,6 +292,28 @@ func findCmd(args []string) error {
 		return nil
 	}
 	return nil
+}
+
+func normalizeFindArgs(args []string) []string {
+	var flags, positional []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--json":
+			flags = append(flags, a)
+		case a == "--max-files":
+			flags = append(flags, a)
+			if i+1 < len(args) {
+				i++
+				flags = append(flags, args[i])
+			}
+		case strings.HasPrefix(a, "--max-files="):
+			flags = append(flags, a)
+		default:
+			positional = append(positional, a)
+		}
+	}
+	return append(flags, positional...)
 }
 
 func stateCmd(args []string) error {

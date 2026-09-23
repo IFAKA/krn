@@ -32,7 +32,7 @@ cd krn
 ./install.sh
 ```
 
-`install.sh` requires Go 1.24+, builds KRn, installs it at `~/.local/bin/krn`, and adds a managed block to `$CODEX_HOME/AGENTS.md` or `~/.codex/AGENTS.md`. If `krn` is not on `PATH`, add `~/.local/bin` to it.
+`install.sh` requires Go 1.24+, builds KRn, installs it at `~/.local/bin/krn`, and adds a small managed routing policy to `$CODEX_HOME/AGENTS.md` or `~/.codex/AGENTS.md`. If `krn` is not on `PATH`, add `~/.local/bin` to it.
 
 ## Use
 
@@ -153,6 +153,10 @@ krn integrate codex|remove-codex
 krn doctor
 krn uninstall
 ```
+
+The Codex integration is intentionally instruction-based. It does not install prompt hooks, mutate Codex state databases, or force `krn context` on every task. Codex is instructed to use KRn when it is likely to reduce context, repeated exploration, or unreconstructable reasoning: `context` for repository orientation and saved task state, `find` before broad file reading, `verify` when discovered checks fit, `exec` only for deterministic repeated commands with explicit dependencies, `state` only for irreducible durable facts, and `compile` only to review repeated verified trajectories.
+
+Codex should skip KRn for trivial answers, single known-file edits, direct user-specified commands, or when a normal tool call is cheaper than consulting KRn. This keeps the default integration small and fail-open while still making automatic use operationally clear.
 
 `--cache` requires at least one `--input`.
 

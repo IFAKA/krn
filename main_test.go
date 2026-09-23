@@ -128,6 +128,36 @@ func TestIntegrationPreservesUserContentAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestCodexIntegrationInstallsOperationalRoutingPolicy(t *testing.T) {
+	d := t.TempDir()
+	t.Setenv("CODEX_HOME", d)
+	p := filepath.Join(d, "AGENTS.md")
+	if err := integrateCmd([]string{"codex"}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	checks := []string{
+		"Use it only when it is likely to reduce model context",
+		"krn context --json",
+		"krn find QUERY --json --max-files N",
+		"krn verify --level fast|full --json",
+		"krn exec --cache --input PATH",
+		"krn state",
+		"krn compile",
+		"Skip KRn for trivial answers",
+		"single known-file edits",
+	}
+	for _, want := range checks {
+		if !strings.Contains(s, want) {
+			t.Fatalf("integration policy missing %q in:\n%s", want, s)
+		}
+	}
+}
+
 func TestMalformedStateFailsClosedAtReader(t *testing.T) {
 	d := t.TempDir()
 	p := filepath.Join(d, "state.json")
@@ -185,5 +215,13 @@ func TestProjectionIsBounded(t *testing.T) {
 	}
 	if !strings.Contains(got, "full.log") {
 		t.Fatal("projection lost recoverable log reference")
+	}
+}
+
+func TestFindAcceptsDocumentedFlagOrder(t *testing.T) {
+	got := normalizeFindArgs([]string{"auth", "--json", "--max-files", "3"})
+	want := []string{"--json", "--max-files", "3", "auth"}
+	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
+		t.Fatalf("got %#v, want %#v", got, want)
 	}
 }

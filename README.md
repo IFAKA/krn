@@ -93,15 +93,16 @@ KRn provides small, recoverable interfaces for deterministic work that can be re
                    CACHE         METRICS
                      │
                      ▼
-                VALID REUSE
-
-successful exact executions
-          │
-          ▼
-       compile
-          │
-          ▼
- REVIEW CANDIDATE ONLY
+               VERIFIED REUSE
+                     │
+                     ▼
+          SUCCESSFUL EXACT EXECUTIONS
+                     │
+                     ▼
+                  COMPILE
+                     │
+                     ▼
+             REVIEW CANDIDATE ONLY
 ```
 
 * `context` reconstructs Git root, branch, commit, changed paths, detected ecosystems, and saved task state.

@@ -99,26 +99,16 @@ tools prove facts        model judges, plans, and synthesizes
  reusable results      local measurements
        |
        v
- VERIFIED REUSE               reuse only if command and inputs still match
-       |
-       v
-SUCCESSFUL EXACT EXECUTIONS   repeated verified executions accumulate
-       |
-       v
-     COMPILE                  find exact repeated patterns
-       |
-       v
-REVIEW CANDIDATE ONLY         suggest inspection, never auto-promote
+ VERIFIED REUSE               reuse only while command and inputs still match
 ```
 
-The main path is conservative: KRn reconstructs what it can, gathers bounded evidence, lets deterministic tools and Codex reasoning meet at verification, and records only verified work. The reuse path is narrower: cached results are reused only while their explicit dependencies still match, and repeated exact executions become review candidates rather than automatic abstractions.
+The main path is conservative: KRn reconstructs what it can, gathers bounded evidence, lets deterministic tools and Codex reasoning meet at verification, and records only verified work. The reuse path is narrower: cached results are reused only while their explicit dependencies still match.
 
 * `context` reconstructs Git root, branch, commit, changed paths, detected ecosystems, and saved task state.
 * `find` uses ripgrep, returns a bounded file/snippet projection, and saves the full search output for recovery.
 * `verify` discovers safe project-native checks from `.kern/config.json`, `package.json`, Go, Cargo, or pytest. Unknown projects remain `unknown`; KRn does not invent a command.
 * `exec` runs structured local commands, bounds output shown to the caller, records metrics, and can cache executions only when explicit input dependencies are supplied.
 * Cached executions are reused only when their command, repository provenance, schema, declared dependencies, dependency fingerprints, metadata, and result integrity remain valid.
-* `compile` reads successful trajectories and emits review-only candidates for repeated exact commands with explicit dependencies. It never infers semantic equivalence, parameterizes commands, promotes operations, or executes candidates automatically.
 
 The implementation fails open around uncertain reconstruction or reuse: unavailable, malformed, stale, tampered, or mismatched evidence is rejected rather than treated as valid.
 
@@ -157,14 +147,13 @@ krn state set objective TEXT
 krn state add constraint|proven|open|negative TEXT
 krn state clear
 krn exec [--verified] [--cache --input PATH ...] -- COMMAND ARGS...
-krn compile [--min N] [--json]
 krn eval --task PATH --verify COMMAND --model MODEL --reasoning-effort EFFORT [--output DIR] [--json]
 krn integrate codex|remove-codex
 krn doctor
 krn uninstall
 ```
 
-The Codex integration is intentionally instruction-based. It does not install prompt hooks, mutate Codex state databases, or force `krn context` on every task. Codex is instructed to use KRn when it is likely to reduce context, repeated exploration, or unreconstructable reasoning: `context` for repository orientation and saved task state, `find` before broad file reading, `verify` when discovered checks fit, `exec` only for deterministic repeated commands with explicit dependencies, `state` only for irreducible durable facts, and `compile` only to review repeated verified trajectories.
+The Codex integration is intentionally instruction-based. It does not install prompt hooks, mutate Codex state databases, or force `krn context` on every task. Codex is instructed to use KRn when it is likely to reduce context, repeated exploration, or unreconstructable reasoning: `context` for repository orientation and saved task state, `find` before broad file reading, `verify` when discovered checks fit, `exec` only for deterministic repeated commands with explicit dependencies, and `state` only for irreducible durable facts.
 
 Codex should skip KRn for trivial answers, single known-file edits, direct user-specified commands, or when a normal tool call is cheaper than consulting KRn. This keeps the default integration small and fail-open while still making automatic use operationally clear.
 
@@ -195,7 +184,7 @@ A changed declared input, command, repository root, malformed record, stale sche
 
 Unknown side effects are never inferred safe. Callers must declare the complete inputs that make a command reusable.
 
-`--verified` is an external assertion recorded for review candidates. It is not proof of command purity, complete dependencies, semantic equivalence, or generalized applicability.
+`--verified` is an external assertion recorded with an execution. It is not proof of command purity or complete dependency coverage.
 
 ## Storage and privacy
 
@@ -267,7 +256,6 @@ The source, tests, and benchmark establish:
 * malformed/stale/tampered cache rejection
 * JSONL metrics
 * marker-based idempotent Codex integration
-* exact-command review candidates
 * argument validation
 
 `go test ./...`, `go test -race ./...`, `go vet ./...`, shell syntax checks, and the benchmark provide executable checks for these local behaviors.
@@ -321,31 +309,6 @@ Current measurements do **not** establish:
 Those claims require measurement on repeated real Codex workloads.
 
 `benchmark.sh` is therefore a local falsification harness for deterministic execution and cache behavior, not evidence that KRn is globally optimal or that it reduces model-token consumption.
-
-## `compile`
-
-`compile` is intentionally conservative.
-
-It examines successful recorded executions and may report repeated **exact commands** with explicit dependencies as review candidates.
-
-A candidate means only:
-
-> this exact deterministic execution pattern has occurred repeatedly and may deserve human inspection.
-
-It does **not** mean the executions are semantically equivalent beyond what their recorded structure establishes.
-
-`compile` does not:
-
-* infer parameterized operations
-* infer command purity
-* infer undeclared dependencies
-* infer semantic equivalence
-* create reusable operations
-* automatically promote candidates
-* automatically execute candidates
-* use an LLM similarity decision
-
-Repetition is evidence of repetition, not proof of abstraction.
 
 ## What KRn deliberately does not do
 

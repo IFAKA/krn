@@ -29,7 +29,6 @@ Routing:
 - For verification, prefer ` + "`krn verify --level fast|full --json`" + ` when its discovered checks fit the task; otherwise run the project-native focused command directly.
 - Use ` + "`krn exec --cache --input PATH ... -- COMMAND ...`" + ` only for deterministic repeated commands with explicit input dependencies; add ` + "`--verified`" + ` only after an external check verified the result.
 - Use ` + "`krn state`" + ` only for irreducible durable facts: objective, constraints, proven facts, open questions, or negative results that are not cheaply reconstructable from Git/files/tests.
-- Use ` + "`krn compile`" + ` only when reviewing repeated verified trajectories for reusable deterministic operations.
 
 Skip KRn for trivial answers, single known-file edits, direct user-specified commands, or when a normal tool call is cheaper than consulting KRn. Do not dump large KRn logs into context; use bounded projections and paths to recover details only when needed.`
 
@@ -82,8 +81,6 @@ func main() {
 		err = stateCmd(os.Args[2:])
 	case "exec":
 		err = execCmd(os.Args[2:])
-	case "compile":
-		err = compileCmd(os.Args[2:])
 	case "eval":
 		err = evalCmd(os.Args[2:])
 	case "integrate":
@@ -105,7 +102,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("krn " + version + "\nusage: krn context|find|verify|state|exec|compile|eval|integrate|doctor|uninstall")
+	fmt.Println("krn " + version + "\nusage: krn context|find|verify|state|exec|eval|integrate|doctor|uninstall")
 }
 
 func discover() (repo, error) {
@@ -281,7 +278,11 @@ func findCmd(args []string) error {
 		for _, p := range files {
 			selected[p] = hits[p]
 		}
-		return jsonPrint(map[string]any{"query": q, "matches": len(counts), "files": files, "hits": selected, "full_log": log, "duration_ms": time.Since(start).Milliseconds()})
+		status := "ok"
+		if e != nil {
+			status = "unavailable"
+		}
+		return jsonPrint(map[string]any{"query": q, "matches": len(counts), "files": files, "hits": selected, "full_log": log, "status": status, "duration_ms": time.Since(start).Milliseconds()})
 	}
 	fmt.Printf("query: %s\nfiles: %d\nfull_log: %s\n", q, len(files), log)
 	for _, p := range files {
@@ -290,8 +291,8 @@ func findCmd(args []string) error {
 			fmt.Printf("  %d: %s\n", h.Line, h.Text)
 		}
 	}
-	if e != nil && len(counts) == 0 {
-		return nil
+	if e != nil {
+		fmt.Printf("status: unavailable (%v)\n", e)
 	}
 	return nil
 }
@@ -338,12 +339,10 @@ func stateCmd(args []string) error {
 		return writeJSON(p, stateFile{})
 	}
 	if len(args) < 3 {
-		return errors.New("state set|add|clear <field> [text]")
+		return errors.New("state set objective TEXT | add constraint|proven|open|negative TEXT | clear")
 	}
-	field, op, val := args[0], args[1], strings.Join(args[2:], " ")
-	if op == "clear" {
-		s = stateFile{}
-	} else if op == "set" && field == "objective" {
+	op, field, val := args[0], args[1], strings.Join(args[2:], " ")
+	if op == "set" && field == "objective" {
 		s.Objective = val
 	} else if op == "add" {
 		switch field {
@@ -622,13 +621,17 @@ func execCmd(args []string) error {
 	if *cache && len(inputs) == 0 {
 		return errors.New("cache requires at least one --input")
 	}
-	canonical := canonicalInputs(r.Root, inputs)
-	key, fps, e := cacheKeyAtRoot(r.Root, command, canonical)
-	if e != nil {
-		return e
-	}
-	cp := filepath.Join(r.Private, "cache", key+".json")
+	var canonical []string
+	var key string
+	var fps map[string]string
+	var cp string
 	if *cache {
+		canonical = canonicalInputs(r.Root, inputs)
+		key, fps, e = cacheKeyAtRoot(r.Root, command, canonical)
+		if e != nil {
+			return e
+		}
+		cp = filepath.Join(r.Private, "cache", key+".json")
 		var rec cacheRecord
 		if readJSON(cp, &rec) == nil && validCacheRecord(rec, key, command, canonical, fps) {
 			fmt.Print(projection([]byte(rec.Result), rec.Log))
@@ -700,89 +703,6 @@ type multiFlag []string
 
 func (m *multiFlag) String() string     { return strings.Join(*m, ",") }
 func (m *multiFlag) Set(s string) error { *m = append(*m, s); return nil }
-
-func compileCmd(args []string) error {
-	f := flag.NewFlagSet("compile", flag.ContinueOnError)
-	min := f.Int("min", 3, "minimum successful repetitions")
-	js := f.Bool("json", false, "json")
-	if e := f.Parse(args); e != nil {
-		return e
-	}
-	if *min < 1 {
-		return errors.New("min must be positive")
-	}
-	r, e := discover()
-	if e != nil {
-		return e
-	}
-	b, e := os.ReadFile(filepath.Join(r.Private, "metrics.jsonl"))
-	if e != nil {
-		if os.IsNotExist(e) {
-			fmt.Println("no trajectories")
-			return nil
-		}
-		return e
-	}
-	var records []metric
-	sc := bufio.NewScanner(strings.NewReader(string(b)))
-	for sc.Scan() {
-		var m metric
-		if json.Unmarshal(sc.Bytes(), &m) != nil || m.Operation != "exec" || m.Result != "success" {
-			continue
-		}
-		records = append(records, m)
-	}
-	out := exactCandidates(records, *min, r.Root)
-	if *js {
-		return jsonPrint(map[string]any{"candidates": out, "promoted": false})
-	}
-	if len(out) == 0 {
-		fmt.Println("no conservative candidates")
-		return nil
-	}
-	fmt.Println("candidates (review before turning into reusable primitives):")
-	for _, x := range out {
-		fmt.Println(x)
-	}
-	return nil
-}
-
-func exactCandidates(records []metric, min int, root string) []any {
-	type group struct {
-		Command      []string
-		Count        int
-		Dependencies []string
-	}
-	groups := map[string]*group{}
-	for _, m := range records {
-		if m.Operation != "exec" || m.Result != "success" || !m.Verified {
-			continue
-		}
-		deps := canonicalInputs(root, m.Dependencies)
-		if len(deps) == 0 {
-			continue
-		}
-		keyBytes, _ := json.Marshal(struct {
-			Command      []string `json:"command"`
-			Dependencies []string `json:"dependencies"`
-		}{m.Parameters, deps})
-		key := string(keyBytes)
-		g := groups[key]
-		if g == nil {
-			g = &group{Command: append([]string(nil), m.Parameters...), Dependencies: deps}
-			groups[key] = g
-		}
-		g.Count++
-	}
-	var out []any
-	for _, g := range groups {
-		if g.Count >= min {
-			out = append(out, map[string]any{"status": "candidate", "operation": "exec", "parameters": g.Command, "repetitions": g.Count, "dependencies": g.Dependencies, "reason": "repeated exact command with explicit dependencies; review required; no automatic promotion"})
-		}
-	}
-	sort.Slice(out, func(i, j int) bool { return fmt.Sprint(out[i]) < fmt.Sprint(out[j]) })
-	return out
-}
 
 func integrateCmd(args []string) error {
 	if len(args) != 1 || (args[0] != "codex" && args[0] != "remove-codex") {

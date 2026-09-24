@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -147,7 +148,6 @@ func TestCodexIntegrationInstallsOperationalRoutingPolicy(t *testing.T) {
 		"krn verify --level fast|full --json",
 		"krn exec --cache --input PATH",
 		"krn state",
-		"krn compile",
 		"Skip KRn for trivial answers",
 		"single known-file edits",
 	}
@@ -170,44 +170,6 @@ func TestMalformedStateFailsClosedAtReader(t *testing.T) {
 	}
 }
 
-func TestCompilerRecognizesOnlyExactRepetition(t *testing.T) {
-	records := []metric{
-		{Operation: "exec", Parameters: []string{"printf", "ok"}, Dependencies: []string{"input.txt"}, Result: "success", Verified: true},
-		{Operation: "exec", Parameters: []string{"printf", "ok"}, Dependencies: []string{"input.txt"}, Result: "success", Verified: true},
-		{Operation: "exec", Parameters: []string{"printf", "ok"}, Dependencies: []string{"input.txt"}, Result: "success", Verified: true},
-	}
-	got := exactCandidates(records, 3, "/repo")
-	if len(got) != 1 {
-		t.Fatalf("got %d candidates, want one", len(got))
-	}
-	if got[0].(map[string]any)["operation"] != "exec" {
-		t.Fatalf("unexpected candidate: %#v", got[0])
-	}
-}
-
-func TestCompilerDoesNotMergeDifferentCommandsOrDependencies(t *testing.T) {
-	records := []metric{
-		{Operation: "exec", Parameters: []string{"printf", "ok"}, Dependencies: []string{"a"}, Result: "success", Verified: true},
-		{Operation: "exec", Parameters: []string{"printf", "ok"}, Dependencies: []string{"b"}, Result: "success", Verified: true},
-		{Operation: "exec", Parameters: []string{"printf", "different"}, Dependencies: []string{"a"}, Result: "success", Verified: true},
-		{Operation: "exec", Parameters: []string{"printf", "different"}, Dependencies: []string{"b"}, Result: "success", Verified: true},
-	}
-	if got := exactCandidates(records, 3, "/repo"); len(got) != 0 {
-		t.Fatalf("merged semantically different operations: %#v", got)
-	}
-}
-
-func TestCompilerRequiresVerifiedExplicitDependencies(t *testing.T) {
-	records := []metric{
-		{Operation: "exec", Parameters: []string{"printf", "ok"}, Result: "success", Verified: true},
-		{Operation: "exec", Parameters: []string{"printf", "ok"}, Dependencies: []string{"input.txt"}, Result: "success", Verified: false},
-		{Operation: "exec", Parameters: []string{"printf", "ok"}, Dependencies: []string{"input.txt"}, Result: "failure", Verified: true},
-	}
-	if got := exactCandidates(records, 1, "/repo"); len(got) != 0 {
-		t.Fatalf("accepted unproven execution: %#v", got)
-	}
-}
-
 func TestProjectionIsBounded(t *testing.T) {
 	got := projection([]byte(strings.Repeat("x", 20000)), "/tmp/full.log")
 	if len(got) > 12100 {
@@ -215,6 +177,40 @@ func TestProjectionIsBounded(t *testing.T) {
 	}
 	if !strings.Contains(got, "full.log") {
 		t.Fatal("projection lost recoverable log reference")
+	}
+}
+
+func TestStateUsesDocumentedArgumentOrder(t *testing.T) {
+	d := t.TempDir()
+	if err := exec.Command("git", "-C", d, "init", "-q").Run(); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(d); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(old) })
+	if err := stateCmd([]string{"set", "objective", "keep", "it", "small"}); err != nil {
+		t.Fatal(err)
+	}
+	var got stateFile
+	if err := readJSON(filepath.Join(d, ".git", "krn", "state.json"), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Objective != "keep it small" {
+		t.Fatalf("objective = %q", got.Objective)
+	}
+	if err := stateCmd([]string{"add", "negative", "no", "compiler"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := readJSON(filepath.Join(d, ".git", "krn", "state.json"), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Negative) != 1 || got.Negative[0] != "no compiler" {
+		t.Fatalf("negative = %#v", got.Negative)
 	}
 }
 

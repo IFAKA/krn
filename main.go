@@ -88,6 +88,8 @@ func main() {
 		err = execCmd(os.Args[2:])
 	case "eval":
 		err = evalCmd(os.Args[2:])
+	case "eval-suite":
+		err = evalSuiteCmd(os.Args[2:])
 	case "integrate":
 		err = integrateCmd(os.Args[2:])
 	case "doctor":
@@ -107,7 +109,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("krn " + version + "\nusage: krn context|find|code|verify|state|exec|eval|integrate|doctor|uninstall")
+	fmt.Println("krn " + version + "\nusage: krn context|find|code|verify|state|exec|eval|eval-suite|integrate|doctor|uninstall")
 }
 
 func discover() (repo, error) {

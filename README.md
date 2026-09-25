@@ -412,7 +412,8 @@ internal/code/        krn code (ast-grep structural edits)
 internal/verify/      krn verify
 internal/state/       krn state
 internal/exec/        krn exec and the explicit-input cache
-internal/eval/        krn eval (A/B harness)
+internal/eval/        krn eval (A/B harness) and krn eval-suite
+eval/                 eval-suite task manifest and fixture repository
 internal/integrate/   Codex routing policy, krn integrate, krn uninstall
 internal/doctor/      krn doctor
 internal/testutil/    helpers shared by tests

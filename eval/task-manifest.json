@@ -1,0 +1,43 @@
+{
+  "schema": "gate1.v4",
+  "fixture_root": "eval/fixture",
+  "ordering": "task-index-parity: A-first for even indexes, B-first for odd indexes",
+  "tasks": [
+    {
+      "id": "known-file",
+      "category": "trivial-known-file",
+      "prompt": "In config/limits.json, change max_discount_percent from 10 to 12. Do not change any other file.",
+      "verify": "test \"$(awk -F: '/max_discount_percent/{gsub(/[^0-9]/,\"\",$2); print $2}' config/limits.json)\" = 12 && test \"$(git diff --name-only)\" = config/limits.json"
+    },
+    {
+      "id": "orientation",
+      "category": "repository-orientation",
+      "prompt": "Implement exactly `func Names(products []Product) []string` in catalog/catalog.go. It must return the product names in input order. Add a focused test that calls Names(Default()) and expects [\"Salmon bites\", \"Rope toy\"]. Do not ask for clarification; implement this exact API and keep existing behavior passing.",
+      "verify": "go test ./... && rg -q 'func Names' catalog/catalog.go && rg -q 'Salmon bites' catalog/catalog_test.go"
+    },
+    {
+      "id": "cross-file",
+      "category": "cross-file-investigation-change",
+      "prompt": "Add exactly this third product to catalog.Default: Product{SKU: \"collar-003\", Name: \"Collar\", Price: 599}. Update TestDefaultCatalogTotal to expect 2797. Do not change the summary command; it already reads Default and must then print collar-003=599 as its last line. Keep all tests passing and do not ask for clarification.",
+      "verify": "go test ./... && test \"$(go run ./cmd/summary | tail -n 1)\" = collar-003=599"
+    },
+    {
+      "id": "repeated-operation",
+      "category": "naturally-repeated-deterministic-work",
+      "prompt": "Create docs/catalog-index.txt with exactly these two tab-separated lines and a final newline: food-001, Salmon bites, 1299; toy-002, Rope toy, 899. Add a focused Go test named TestCatalogIndex that reads this file and fails if it is stale relative to Default(). Keep all existing tests passing. Implement directly without asking questions.",
+      "verify": "go test ./... && test \"$(printf 'food-001\\tSalmon bites\\t1299\\ntoy-002\\tRope toy\\t899')\" = \"$(cat docs/catalog-index.txt)\" && rg -q 'catalog-index' ."
+    },
+    {
+      "id": "verification-heavy",
+      "category": "verification-heavy-change",
+      "prompt": "Change Total so products with negative prices contribute zero while positive prices still contribute their price. Keep the return type int. Add focused tests named TestTotalIgnoresNegative and TestTotalPositivePrices covering both cases. Keep all repository checks passing; implement directly without asking questions.",
+      "verify": "go test ./... && rg -qi 'negative' catalog/catalog_test.go"
+    },
+    {
+      "id": "reconstruction",
+      "category": "prior-state-reconstruction",
+      "prompt": "Using docs/invariant.md and the current code, implement exactly `func Validate(products []Product) error` in catalog/catalog.go. Return the first error for a negative price or an empty SKU, and return nil for valid products. Add focused tests named TestValidateRejectsNegativePrice, TestValidateRejectsEmptySKU, and TestValidateAcceptsValidProducts. Use the standard library errors or fmt package. Do not ask questions; implement this exact API and keep existing behavior passing.",
+      "verify": "go test ./... && rg -q 'func Validate' catalog/catalog.go && rg -qi 'negative' catalog/catalog_test.go && rg -q 'SKU' catalog/catalog_test.go"
+    }
+  ]
+}

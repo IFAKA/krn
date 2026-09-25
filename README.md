@@ -152,6 +152,7 @@ krn eval --task PATH --verify COMMAND --model MODEL --reasoning-effort EFFORT [-
 krn integrate codex|remove-codex
 krn doctor
 krn uninstall
+krn version
 ```
 
 The Codex integration is instruction-based. Codex makes a routing decision before its first shell or file-reading tool call. When a task requires learning the repository before answering or editing, the first operation is `krn context --json`; this includes repository-orientation questions such as what the project is, how it is structured, and where behavior is implemented. If more evidence is needed, Codex prefers `krn find QUERY --json --max-files N` before broad traversal or repeated search. `verify`, `exec`, and `state` retain their narrower roles described above.
@@ -209,14 +210,19 @@ KRn uses local files and existing repository tools. It has no daemon, cloud back
 
 The installer writes only to `~/.local/bin/krn` and the managed Codex instruction block.
 
-Repository-private data is stored under the Git directory:
+Repository-private KRn data is stored under the Git directory:
 
 ```text
 <repo>/.git/krn/state.json
 <repo>/.git/krn/metrics.jsonl
 <repo>/.git/krn/cache/<content-key>.json
 <repo>/.git/krn/runs/<timestamp>-<operation>.log
-<repo>/.kern/config.json                 optional team-owned checks
+```
+
+The optional team-owned verification configuration is stored at the repository root:
+
+```text
+<repo>/.kern/config.json
 ```
 
 Logs and state are local and may contain command output or task text.

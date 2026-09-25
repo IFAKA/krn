@@ -1,18 +1,18 @@
 # KRn
 
-**Make Codex repeat less deterministic work.**
+**Make coding agents repeat less deterministic work.**
 
-KRn is a research-informed deterministic optimization substrate for Codex. It reconstructs repository facts, bounds retrieved evidence, verifies work, records irreducible state and execution evidence, and safely reuses deterministic computation when explicit dependencies establish that reuse remains valid.
+KRn is a research-informed deterministic optimization substrate for coding agents such as Codex and Claude Code. It reconstructs repository facts, bounds retrieved evidence, verifies work, records irreducible state and execution evidence, and safely reuses deterministic computation when explicit dependencies establish that reuse remains valid.
 
-Codex remains the agent. KRn is the layer beneath and around it:
+Codex or Claude Code remains the agent. KRn is the layer beneath and around it:
 
 ```text
-GPT/model
-    ↓
-  Codex        agent / harness
-    ↓
-   KRn         deterministic optimization substrate
-    ↓
+     model
+       ↓
+Codex / Claude Code   agent / harness
+       ↓
+      KRn              deterministic optimization substrate
+       ↓
 repository + existing tools
 ```
 
@@ -32,16 +32,16 @@ cd krn
 ./install.sh
 ```
 
-`install.sh` requires Go 1.24+, builds KRn, installs it at `~/.local/bin/krn`, installs the required `ast-grep` CLI when it is missing, and adds a small managed routing policy to `$CODEX_HOME/AGENTS.md` or `~/.codex/AGENTS.md`. It tries npm, Cargo, and pip (installing into `~/.local` without sudo), then falls back to Homebrew, which installs into its own prefix. If either command is not on `PATH`, add `~/.local/bin` to it.
+`install.sh` requires Go 1.24+, builds KRn, installs it at `~/.local/bin/krn`, installs the required `ast-grep` CLI when it is missing, and adds a small managed routing policy to `$CODEX_HOME/AGENTS.md` (default `~/.codex/AGENTS.md`). When Claude Code is detected (`claude` on `PATH` or an existing `$CLAUDE_CONFIG_DIR`/`~/.claude` directory), it also adds the same policy to `$CLAUDE_CONFIG_DIR/CLAUDE.md` (default `~/.claude/CLAUDE.md`). It tries npm, Cargo, and pip (installing into `~/.local` without sudo), then falls back to Homebrew, which installs into its own prefix. If either command is not on `PATH`, add `~/.local/bin` to it.
 
 ## Use
 
 ```sh
 cd any-git-project
-codex
+codex    # or: claude
 ```
 
-There is no `krn init`. The integration is global; the commands operate on the Git repository containing the current directory.
+There is no `krn init`. The integration is global (per agent, via `krn integrate codex|claude`); the commands operate on the Git repository containing the current directory.
 
 ## Why KRn?
 
@@ -50,7 +50,7 @@ A model context window is expensive working memory. Repository facts, command ou
 KRn therefore tries to move deterministic work downward:
 
 ```text
-Codex reasoning
+agent reasoning
       ↓
 minimum evidence
       ↓
@@ -63,14 +63,14 @@ verified cache
 safe reuse
 ```
 
-This does not make Codex passive and does not establish that KRn reduces model tokens or reasoning.
+This does not make the agent passive and does not establish that KRn reduces model tokens or reasoning.
 
 KRn provides small, recoverable interfaces for deterministic work that can be reconstructed, measured, verified, or safely reused.
 
 ## How it works
 
 ```text
-TASK                         user asks Codex to do work
+TASK                         user asks the agent to do work
   |
   v
 RECONSTRUCT                  rebuild repo facts from Git, files, and state
@@ -81,7 +81,7 @@ MINIMUM EVIDENCE             retrieve only the evidence needed now
   +---------------------------+
   |                           |
   v                           v
-DETERMINISTIC WORK       CODEX REASONING
+DETERMINISTIC WORK       AGENT REASONING
 tools prove facts        model judges, plans, and synthesizes
   |                           |
   +-------------+-------------+
@@ -102,7 +102,7 @@ tools prove facts        model judges, plans, and synthesizes
  VERIFIED REUSE               reuse only while command and inputs still match
 ```
 
-The main path is conservative: KRn reconstructs what it can, gathers bounded evidence, lets deterministic tools and Codex reasoning meet at verification, and records only verified work. The reuse path is narrower: cached results are reused only while their explicit dependencies still match.
+The main path is conservative: KRn reconstructs what it can, gathers bounded evidence, lets deterministic tools and agent reasoning meet at verification, and records only verified work. The reuse path is narrower: cached results are reused only while their explicit dependencies still match.
 
 * `context` reconstructs Git root, branch, commit, changed paths, detected ecosystems, and saved task state.
 * `find` uses ripgrep, returns a bounded file/snippet projection, and saves the full search output for recovery.
@@ -114,16 +114,16 @@ The implementation fails open around uncertain reconstruction or reuse: unavaila
 
 ## Memory model
 
-Codex context is working memory, not KRn's persistent memory.
+Agent context is working memory, not KRn's persistent memory.
 
 ```text
-Codex context             = expensive working memory
+agent context             = expensive working memory
 repository + Git          = reconstructable source-of-truth memory
 .git/krn/state.json       = irreducible semantic/task memory
 .git/krn/cache/           = reusable deterministic computation
 .git/krn/runs/            = recoverable command/search/verification evidence
 .git/krn/metrics.jsonl    = local execution measurements
-AGENTS.md                 = policy/instructions, not project memory
+AGENTS.md / CLAUDE.md     = policy/instructions, not project memory
 ```
 
 The governing rule is:
@@ -149,15 +149,16 @@ krn state add constraint|proven|open|negative TEXT
 krn state clear
 krn exec [--verified] [--cache --input PATH ...] -- COMMAND ARGS...
 krn eval --task PATH --verify COMMAND --model MODEL --reasoning-effort EFFORT [--output DIR] [--json]
+krn eval-suite [--manifest PATH] --model MODEL --reasoning-effort EFFORT [--output DIR] [--freeze-only] [--json]
 krn integrate codex|remove-codex|claude|remove-claude
 krn doctor
 krn uninstall
 krn version
 ```
 
-The Codex integration is instruction-based. Codex makes a routing decision before its first shell or file-reading tool call. When a task requires learning the repository before answering or editing, the first operation is `krn context --json`; this includes repository-orientation questions such as what the project is, how it is structured, and where behavior is implemented. If more evidence is needed, Codex prefers `krn find QUERY --json --max-files N` before broad traversal or repeated search. `verify`, `exec`, and `state` retain their narrower roles described above.
+The Codex and Claude Code integrations are instruction-based and install the same routing policy, addressed to each agent: a managed block in the Codex `AGENTS.md` or the Claude Code `CLAUDE.md`. The agent makes a routing decision before its first shell or file-reading tool call. When a task requires learning the repository before answering or editing, the first operation is `krn context --json`; this includes repository-orientation questions such as what the project is, how it is structured, and where behavior is implemented. If more evidence is needed, the agent prefers `krn find QUERY --json --max-files N` before broad traversal or repeated search. `verify`, `exec`, and `state` retain their narrower roles described above.
 
-The orientation rule remains bypassable for trivial answers, exact known-file/content requests, explicit user-requested shell commands, one clearly sufficient cheap direct operation, or unavailable KRn. The integration does not install prompt hooks, mutate Codex state databases, force KRn on every task, or claim that KRn reduces model tokens, reasoning, or wall time without measurements. Re-running integration replaces all well-formed KRn-managed blocks with the current policy and leaves unrelated AGENTS.md content in place.
+The orientation rule remains bypassable for trivial answers, exact known-file/content requests, explicit user-requested shell commands, one clearly sufficient cheap direct operation, or unavailable KRn. The integration does not install prompt hooks, mutate agent state databases or settings, force KRn on every task, or claim that KRn reduces model tokens, reasoning, or wall time without measurements. Re-running integration replaces all well-formed KRn-managed blocks with the current policy and leaves unrelated `AGENTS.md`/`CLAUDE.md` content in place.
 
 `--cache` requires at least one `--input`.
 
@@ -179,7 +180,7 @@ This boundary is intentional: the model decides the structural pattern, content,
 
 ### End-to-end A/B evaluation
 
-`krn eval` is a separate experiment from `benchmark.sh`. It evaluates the same task twice from fresh clones of the same committed `HEAD`:
+`krn eval` is a separate experiment from `benchmark.sh`. It currently drives Codex only; there is no Claude Code eval harness yet. It evaluates the same task twice from fresh clones of the same committed `HEAD`:
 
 * A: Codex alone, with isolated Codex state.
 * B: the same Codex invocation plus the current KRn routing policy in isolated Codex instructions.
@@ -208,7 +209,7 @@ Unknown side effects are never inferred safe. Callers must declare the complete 
 
 KRn uses local files and existing repository tools. It has no daemon, cloud backend, network service, or telemetry service.
 
-The installer writes only to `~/.local/bin/krn` and the managed Codex instruction block.
+The installer writes only to `~/.local/bin/krn`, the managed Codex instruction block, the managed Claude Code instruction block (when Claude Code is detected), and an ast-grep install when ast-grep is missing (user-local via npm, Cargo, or pip, otherwise Homebrew).
 
 Repository-private KRn data is stored under the Git directory:
 
@@ -227,7 +228,7 @@ The optional team-owned verification configuration is stored at the repository r
 
 Logs and state are local and may contain command output or task text.
 
-Metrics record measurements available to KRn. Codex token counts are recorded as `unavailable` when they were not supplied.
+Metrics record measurements available to KRn. Model token counts are recorded as `unavailable` when they were not supplied.
 
 Source files, Git, manifests, tests, compilers, CI, and package managers remain authoritative.
 
@@ -246,7 +247,7 @@ KRn therefore treats its architecture as falsifiable and distinguishes research-
 | Do not assume one retrieval family is universally best  | KRn uses ripgrep and explicit repository facts by default rather than adding embeddings, a vector database, or a repository map without workload evidence.   | **[Agent Retrieval Bench: Evaluating Repository Context Retrieval for Coding Agents — Bowen Qin and Yi Xie, 2026, arXiv preprint](https://arxiv.org/abs/2607.24882)** — Evaluates 427 samples from 25 repositories and reports that lexical, RepoMap, embedding, and agent-context approaches perform differently across tasks and metrics; no retrieval family dominates universally. |
 | Context externalization and compression                 | Long trajectories can accumulate irrelevant history; KRn retains full evidence outside active model context and exposes bounded projections.                 | **[ACON: Optimizing Context Compression for Long-horizon LLM Agents — Minki Kang et al., 2026, Lifelong Agent @ ICLR 2026 workshop](https://openreview.net/forum?id=x0alNh5o8v)** — Reports 26–54% lower peak tokens in its evaluated agent settings while largely preserving task performance. KRn does not claim those results for itself.                                           |
 | Dependency-aware caching and invalidation               | Previously computed results should be reused only while the inputs determining them remain valid.                                                            | **[Build Systems à la Carte — Andrey Mokhov, Neil Mitchell, and Simon Peyton Jones, 2018, ICFP](https://doi.org/10.1145/3236774)** — Separates dependency structure from rebuild decisions and analyzes persistent build information, motivating explicit dependencies and conservative invalidation.                                                                                  |
-| Do not infer semantic abstraction from repetition alone | Repeated shell commands do not establish semantic equivalence or safe parameterization. KRn therefore reports exact repetition only as a review signal.      | **[DreamCoder: Bootstrapping Inductive Program Synthesis with Wake-Sleep Library Learning — Kevin Ellis et al., 2021, PLDI](https://doi.org/10.1145/3453483.3454080)** — Studies library learning inside a defined synthesis language and domain. It does not establish that arbitrary Codex execution trajectories can be safely generalized from repetition alone.                   |
+| Do not infer semantic abstraction from repetition alone | Repeated shell commands do not establish semantic equivalence or safe parameterization. KRn therefore reports exact repetition only as a review signal.      | **[DreamCoder: Bootstrapping Inductive Program Synthesis with Wake-Sleep Library Learning — Kevin Ellis et al., 2021, PLDI](https://doi.org/10.1145/3453483.3454080)** — Studies library learning inside a defined synthesis language and domain. It does not establish that arbitrary agent execution trajectories can be safely generalized from repetition alone.                   |
 | Minimal scaffolding                                     | Additional agent machinery is not automatically an improvement, so KRn keeps its substrate small unless measured workload evidence justifies more machinery. | **[ContextBench: A Benchmark for Context Retrieval in Coding Agents — Han Li et al., 2026, arXiv preprint](https://arxiv.org/abs/2602.05892)** — Reports only marginal retrieval gains from more sophisticated scaffolding in its evaluated setting; this supports measuring additional complexity rather than assuming it is beneficial.                                              |
 
 ## Evidence status
@@ -278,7 +279,7 @@ The source, tests, and benchmark establish:
 * conservative cache invalidation
 * malformed/stale/tampered cache rejection
 * JSONL metrics
-* marker-based idempotent Codex integration
+* marker-based idempotent Codex and Claude Code integration
 * argument validation
 
 `go test ./...`, `go test -race ./...`, `go vet ./...`, shell syntax checks, and the benchmark provide executable checks for these local behaviors.
@@ -322,14 +323,14 @@ The broader hypothesis remains unproven:
 
 Current measurements do **not** establish:
 
-* fewer Codex tokens
-* less Codex reasoning
+* fewer agent tokens
+* less agent reasoning
 * higher coding-task completion
 * lower end-to-end agent wall time
 * fewer human interventions
 * better real-world coding-agent performance
 
-Those claims require measurement on repeated real Codex workloads.
+Those claims require measurement on repeated real agent workloads.
 
 `benchmark.sh` is therefore a local falsification harness for deterministic execution and cache behavior, not evidence that KRn is globally optimal or that it reduces model-token consumption.
 
@@ -376,7 +377,7 @@ KRn deliberately fails open where it cannot establish those properties.
 
 ## Related work
 
-Codex is the agent/harness that reasons and uses tools; KRn is a deterministic optimization substrate around that workflow.
+Codex and Claude Code are the agents/harnesses that reason and use tools; KRn is a deterministic optimization substrate around that workflow.
 
 Aider's RepoMap uses a different architecture: it builds a ranked symbol map and sends selected portions to the model.
 
@@ -391,7 +392,7 @@ KRn currently reconstructs repository facts using Git/filesystem tools, uses rip
 krn uninstall
 ```
 
-This removes KRn's managed block from the Codex `AGENTS.md`.
+This removes KRn's managed blocks from the Codex `AGENTS.md` and the Claude Code `CLAUDE.md`.
 
 When invoked from the installed `~/.local/bin/krn`, it also removes that binary.
 
@@ -414,7 +415,7 @@ internal/state/       krn state
 internal/exec/        krn exec and the explicit-input cache
 internal/eval/        krn eval (A/B harness) and krn eval-suite
 eval/                 eval-suite task manifest and fixture repository
-internal/integrate/   Codex routing policy, krn integrate, krn uninstall
+internal/integrate/   Codex/Claude Code routing policy, krn integrate, krn uninstall
 internal/doctor/      krn doctor
 internal/testutil/    helpers shared by tests
 ```

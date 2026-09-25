@@ -133,7 +133,7 @@ func TestInstallScriptAndDirectIntegrationUseTheSamePolicy(t *testing.T) {
 	}
 	cmd := exec.Command("sh", "install.sh")
 	cmd.Dir = testutil.ModuleRoot(t)
-	cmd.Env = append(os.Environ(), "HOME="+installHome, "CODEX_HOME="+installCodexHome, "PATH="+localBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cmd.Env = append(os.Environ(), "HOME="+installHome, "CODEX_HOME="+installCodexHome, "CLAUDE_CONFIG_DIR="+filepath.Join(installHome, ".claude"), "PATH="+localBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("install.sh failed: %v\n%s", err, output)
 	}
@@ -143,5 +143,35 @@ func TestInstallScriptAndDirectIntegrationUseTheSamePolicy(t *testing.T) {
 	}
 	if string(installed) != string(direct) {
 		t.Fatalf("install.sh and direct integration installed different policy:\ndirect=%q\nscript=%q", direct, installed)
+	}
+}
+
+func TestClaudeIntegrationUsesClaudeConfigAndIsReversible(t *testing.T) {
+	d := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", d)
+	p := filepath.Join(d, "CLAUDE.md")
+	if err := os.WriteFile(p, []byte("user instructions"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run([]string{"claude"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run([]string{"claude"}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(p)
+	s := string(b)
+	if strings.Count(s, markerStart) != 1 || !strings.Contains(s, ClaudeText) || !strings.HasPrefix(s, "user instructions\n") {
+		t.Fatalf("unexpected Claude integration: %q", s)
+	}
+	if strings.Contains(ClaudeText, "Codex") || !strings.Contains(ClaudeText, "krn context --json") {
+		t.Fatalf("Claude policy is not addressed to Claude Code: %q", ClaudeText)
+	}
+	if err := Run([]string{"remove-claude"}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ = os.ReadFile(p)
+	if string(b) != "user instructions\n" {
+		t.Fatalf("removal changed user content: %q", b)
 	}
 }

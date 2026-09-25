@@ -12,39 +12,54 @@ const markerStart = "<!-- KRN:BEGIN -->"
 
 const markerEnd = "<!-- KRN:END -->"
 
-const CodexText = `KRn is available globally as a deterministic repository substrate. Decide routing before the first shell or file-reading tool call.
+const policyTemplate = `KRn is available globally as a deterministic repository substrate. Decide routing before the first shell or file-reading tool call.
 
 Routing decision:
 - If the task requires learning the repository before answering or editing, the first operation MUST be ` + "`krn context --json`" + `. Repository orientation includes questions about what the project is, how it is structured, where behavior is implemented, and code changes whose target is not already known.
 - After context, if more repository evidence is needed, prefer ` + "`krn find QUERY --json --max-files N`" + ` before broad manual traversal, repeated search, or reading many files. Use the bounded projection and follow its recoverable log path when necessary.
-- For mechanical code or configuration edits that can be expressed as a supported ast-grep structural pattern, prefer ` + "`krn code read|replace|insert-before|insert-after|remove`" + ` with ` + "`--pattern`" + ` (and ` + "`--lang`" + ` when needed) over sed, perl, Python, or other ad-hoc text-editing commands. Use KRn after deciding the pattern and replacement, and do not use it for semantic decisions.
+- For mechanical code or configuration edits that can be expressed as a supported ast-grep structural pattern, prefer ` + "`krn code read|replace|insert-before|insert-after|remove`" + ` as ` + "`krn code replace --file PATH --pattern PATTERN --content TEXT [--lang LANG]`" + ` (the pattern must match exactly once; content is inserted verbatim, so indent it as it should appear) over sed, perl, Python, or other ad-hoc text-editing commands. Use KRn after deciding the pattern and replacement, and do not use it for semantic decisions.
 - For verification, prefer ` + "`krn verify --level fast|full --json`" + ` when its discovered checks fit the task; otherwise run the project-native focused command directly.
-- Use ` + "`krn exec --cache --input PATH ... -- COMMAND ...`" + ` only for deterministic repeated commands with explicit input dependencies; add ` + "`--verified`" + ` only after an external check verified the result.
+- Use ` + "`krn exec --cache --input PATH ... -- COMMAND ...`" + ` only for deterministic repeated commands with explicit input dependencies (files or directories, one ` + "`--input`" + ` per path); the command after ` + "`--`" + ` runs without a shell, so wrap pipelines or ` + "`&&`" + ` as ` + "`sh -c '...'`" + `; add ` + "`--verified`" + ` only after an external check verified the result.
 - Use ` + "`krn state`" + ` only for irreducible durable facts: objective, constraints, proven facts, open questions, or negative results that are not cheaply reconstructable from Git/files/tests.
 
 Bypass the orientation rule only when repository inspection is unnecessary or KRn cannot provide the evidence: a trivial answer, an exact known file/content named by the user, an explicit user-requested shell command, one clearly sufficient cheap direct operation, or unavailable KRn. Do not dump large KRn logs into context. Do not invoke KRn for every task; preserve these bypasses.
 
-The model remains responsible for semantic decisions and edits. KRn does not replace Codex, add a hook or daemon, or mutate Codex configuration.`
+The model remains responsible for semantic decisions and edits. KRn does not replace AGENT, add a hook or daemon, or mutate AGENT configuration.`
+
+// CodexText and ClaudeText are the same routing policy addressed to each agent.
+var (
+	CodexText  = strings.ReplaceAll(policyTemplate, "AGENT", "Codex")
+	ClaudeText = strings.ReplaceAll(policyTemplate, "AGENT", "Claude Code")
+)
+
+type target struct {
+	name, text, envVar, homeDir, file string
+}
+
+var targets = map[string]target{
+	"codex":  {"Codex", CodexText, "CODEX_HOME", ".codex", "AGENTS.md"},
+	"claude": {"Claude Code", ClaudeText, "CLAUDE_CONFIG_DIR", ".claude", "CLAUDE.md"},
+}
 
 func Run(args []string) error {
-	if len(args) != 1 || (args[0] != "codex" && args[0] != "remove-codex") {
-		return errors.New("integrate requires codex|remove-codex")
+	if len(args) != 1 {
+		return errors.New("integrate requires codex|remove-codex|claude|remove-claude")
 	}
-	home := os.Getenv("CODEX_HOME")
-	if home == "" {
-		home = os.Getenv("HOME")
-		if home == "" {
-			return errors.New("HOME unavailable")
-		}
-		home = filepath.Join(home, ".codex")
+	name, remove := strings.CutPrefix(args[0], "remove-")
+	t, ok := targets[name]
+	if !ok {
+		return errors.New("integrate requires codex|remove-codex|claude|remove-claude")
 	}
-	p := filepath.Join(home, "AGENTS.md")
+	p, err := t.path()
+	if err != nil {
+		return err
+	}
 	b, err := os.ReadFile(p)
 	if err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	s := string(b)
-	if args[0] == "remove-codex" {
+	if remove {
 		var found bool
 		s, found = rewriteManagedBlocks(s, "")
 		if found {
@@ -52,7 +67,7 @@ func Run(args []string) error {
 		}
 		return nil
 	}
-	block := ManagedBlock()
+	block := managedBlock(t.text)
 	if rewritten, found := rewriteManagedBlocks(s, block); found {
 		s = rewritten
 	} else {
@@ -67,12 +82,28 @@ func Run(args []string) error {
 	if e := os.WriteFile(p, []byte(s), 0600); e != nil {
 		return e
 	}
-	fmt.Println("Codex integration installed")
+	fmt.Println(t.name + " integration installed")
 	return nil
 }
 
+func (t target) path() (string, error) {
+	home := os.Getenv(t.envVar)
+	if home == "" {
+		home = os.Getenv("HOME")
+		if home == "" {
+			return "", errors.New("HOME unavailable")
+		}
+		home = filepath.Join(home, t.homeDir)
+	}
+	return filepath.Join(home, t.file), nil
+}
+
 func ManagedBlock() string {
-	return markerStart + "\n" + CodexText + "\n" + markerEnd
+	return managedBlock(CodexText)
+}
+
+func managedBlock(text string) string {
+	return markerStart + "\n" + text + "\n" + markerEnd
 }
 
 // rewriteManagedBlocks replaces the first well-formed KRn block and removes
@@ -116,8 +147,10 @@ func rewriteManagedBlocks(s, replacement string) (string, bool) {
 }
 
 func Uninstall() error {
-	if err := Run([]string{"remove-codex"}); err != nil {
-		return err
+	for _, name := range []string{"remove-codex", "remove-claude"} {
+		if err := Run([]string{name}); err != nil {
+			return err
+		}
 	}
 	exe, err := os.Executable()
 	if err != nil {

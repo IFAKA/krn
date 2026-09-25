@@ -149,7 +149,7 @@ krn state add constraint|proven|open|negative TEXT
 krn state clear
 krn exec [--verified] [--cache --input PATH ...] -- COMMAND ARGS...
 krn eval --task PATH --verify COMMAND --model MODEL --reasoning-effort EFFORT [--output DIR] [--json]
-krn integrate codex|remove-codex
+krn integrate codex|remove-codex|claude|remove-claude
 krn doctor
 krn uninstall
 krn version

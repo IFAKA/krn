@@ -110,6 +110,9 @@ func TestIntegrationPreservesUserContentAndIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, _ := os.ReadFile(p)
+	if strings.Count(string(first), markerStart) != 1 || strings.Count(string(first), markerEnd) != 1 {
+		t.Fatalf("fresh integration did not install exactly one managed block: %q", first)
+	}
 	if err := integrateCmd([]string{"codex"}); err != nil {
 		t.Fatal(err)
 	}
@@ -129,6 +132,41 @@ func TestIntegrationPreservesUserContentAndIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestCodexReintegrationReplacesAllStaleManagedBlocks(t *testing.T) {
+	d := t.TempDir()
+	t.Setenv("CODEX_HOME", d)
+	p := filepath.Join(d, "AGENTS.md")
+	stale := markerStart + "\nold policy\n" + markerEnd
+	content := "before\n" + stale + "\nafter\n" + stale + "\n"
+	if err := os.WriteFile(p, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := integrateCmd([]string{"codex"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(got)
+	if strings.Count(s, markerStart) != 1 || strings.Count(s, markerEnd) != 1 {
+		t.Fatalf("reintegration left duplicate managed blocks: %q", s)
+	}
+	if strings.Contains(s, "old policy") || !strings.Contains(s, codexText) || !strings.Contains(s, "before\n") || !strings.Contains(s, "after\n") {
+		t.Fatalf("stale or unrelated content was mishandled: %q", s)
+	}
+	if err := integrateCmd([]string{"remove-codex"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "before\nafter\n" {
+		t.Fatalf("removal did not preserve unrelated content: %q", got)
+	}
+}
+
 func TestCodexIntegrationInstallsOperationalRoutingPolicy(t *testing.T) {
 	d := t.TempDir()
 	t.Setenv("CODEX_HOME", d)
@@ -142,19 +180,50 @@ func TestCodexIntegrationInstallsOperationalRoutingPolicy(t *testing.T) {
 	}
 	s := string(b)
 	checks := []string{
-		"Use it only when it is likely to reduce model context",
+		"Decide routing before the first shell or file-reading tool call",
+		"the first operation MUST be `krn context --json`",
+		"Repository orientation includes questions about what the project is",
 		"krn context --json",
 		"krn find QUERY --json --max-files N",
+		"krn code read|replace|insert-before|insert-after|remove",
 		"krn verify --level fast|full --json",
 		"krn exec --cache --input PATH",
 		"krn state",
-		"Skip KRn for trivial answers",
-		"single known-file edits",
+		"Bypass the orientation rule only when repository inspection is unnecessary",
+		"an exact known file/content named by the user",
 	}
 	for _, want := range checks {
 		if !strings.Contains(s, want) {
 			t.Fatalf("integration policy missing %q in:\n%s", want, s)
 		}
+	}
+}
+
+func TestInstallScriptAndDirectIntegrationUseTheSamePolicy(t *testing.T) {
+	directHome := t.TempDir()
+	t.Setenv("CODEX_HOME", directHome)
+	if err := integrateCmd([]string{"codex"}); err != nil {
+		t.Fatal(err)
+	}
+	direct, err := os.ReadFile(filepath.Join(directHome, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	installHome := t.TempDir()
+	installCodexHome := t.TempDir()
+	cmd := exec.Command("sh", "install.sh")
+	cmd.Dir, _ = os.Getwd()
+	cmd.Env = append(os.Environ(), "HOME="+installHome, "CODEX_HOME="+installCodexHome)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("install.sh failed: %v\n%s", err, output)
+	}
+	installed, err := os.ReadFile(filepath.Join(installCodexHome, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(installed) != string(direct) {
+		t.Fatalf("install.sh and direct integration installed different policy:\ndirect=%q\nscript=%q", direct, installed)
 	}
 }
 
@@ -219,5 +288,109 @@ func TestFindAcceptsDocumentedFlagOrder(t *testing.T) {
 	want := []string{"--json", "--max-files", "3", "auth"}
 	if strings.Join(got, "\x00") != strings.Join(want, "\x00") {
 		t.Fatalf("got %#v, want %#v", got, want)
+	}
+}
+
+func TestCodeEditsTopLevelGoDeclarationAndPreservesUnrelatedSource(t *testing.T) {
+	d := t.TempDir()
+	initTestRepo(t, d)
+	file := filepath.Join(d, "odd name.go")
+	original := "package sample\n\nimport \"fmt\"\n\nvar keep = 1\n\nfunc Target() { fmt.Println(\"old\") }\n"
+	if err := os.WriteFile(file, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(d); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(old) })
+
+	if err := codeCmd([]string{"read", "--file", "odd name.go", "--entity", "Target"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := codeCmd([]string{"replace", "--file", "odd name.go", "--entity", "Target", "--content", "func Target() { fmt.Println(\"new\") }"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "package sample\n\nimport \"fmt\"\n\nvar keep = 1\n\nfunc Target() { fmt.Println(\"new\") }\n"
+	if string(got) != want {
+		t.Fatalf("edited source = %q, want %q", got, want)
+	}
+	if err := codeCmd([]string{"insert-before", "--file", "odd name.go", "--entity", "Target", "--content", "func Before() {}"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := codeCmd([]string{"insert-after", "--file", "odd name.go", "--entity", "Target", "--content", "func After() {}"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := codeCmd([]string{"remove", "--file", "odd name.go", "--entity", "Before"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(got), "func Before") || !strings.Contains(string(got), "func After") || !strings.Contains(string(got), "var keep = 1") {
+		t.Fatalf("unexpected final source: %q", got)
+	}
+	if err := codeCmd([]string{"insert-after", "--file", "odd name.go", "--entity", "Target", "--content", "func After() {}"}); err != nil {
+		t.Fatal(err)
+	}
+	gotAgain, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(gotAgain) != string(got) {
+		t.Fatal("repeating an identical insertion was not idempotent")
+	}
+}
+
+func TestCodeRejectsAmbiguousMissingMalformedAndUnsupportedEditsWithoutCorruption(t *testing.T) {
+	d := t.TempDir()
+	initTestRepo(t, d)
+	file := filepath.Join(d, "main.go")
+	original := "package sample\n\nfunc A() {}\nfunc A() {}\nfunc B() {}\n"
+	if err := os.WriteFile(file, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(d); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(old) })
+	for _, args := range [][]string{
+		{"replace", "--file", "main.go", "--entity", "A", "--content", "func A() {"},
+		{"replace", "--file", "main.go", "--entity", "Missing", "--content", "func Missing() {}"},
+		{"replace", "--file", "main.go", "--entity", "A", "--content", "func C() {}"},
+	} {
+		if err := codeCmd(args); err == nil {
+			t.Fatalf("expected code edit to fail: %v", args)
+		}
+		got, readErr := os.ReadFile(file)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if string(got) != original {
+			t.Fatalf("failed edit corrupted source: %q", got)
+		}
+	}
+	if err := codeCmd([]string{"replace", "--file", "main.go", "--entity", "B", "--content", "const C = 1"}); err == nil {
+		t.Fatal("expected unsupported replacement kind to fail")
+	}
+}
+
+func initTestRepo(t *testing.T, dir string) {
+	t.Helper()
+	cmd := exec.Command("git", "-C", dir, "init", "-q")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
 	}
 }

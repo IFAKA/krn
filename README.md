@@ -141,6 +141,7 @@ KRn does not infer undeclared dependencies. Cache safety therefore depends on ca
 ```text
 krn context [--json]
 krn find QUERY [--json] [--max-files N]
+krn code read|replace|insert-before|insert-after|remove --file PATH --entity NAME [--content TEXT|--content-file PATH]
 krn verify [--level fast|full] [--json]
 krn state show
 krn state set objective TEXT
@@ -153,11 +154,27 @@ krn doctor
 krn uninstall
 ```
 
-The Codex integration is intentionally instruction-based. It does not install prompt hooks, mutate Codex state databases, or force `krn context` on every task. Codex is instructed to use KRn when it is likely to reduce context, repeated exploration, or unreconstructable reasoning: `context` for repository orientation and saved task state, `find` before broad file reading, `verify` when discovered checks fit, `exec` only for deterministic repeated commands with explicit dependencies, and `state` only for irreducible durable facts.
+The Codex integration is instruction-based. Codex makes a routing decision before its first shell or file-reading tool call. When a task requires learning the repository before answering or editing, the first operation is `krn context --json`; this includes repository-orientation questions such as what the project is, how it is structured, and where behavior is implemented. If more evidence is needed, Codex prefers `krn find QUERY --json --max-files N` before broad traversal or repeated search. `verify`, `exec`, and `state` retain their narrower roles described above.
 
-Codex should skip KRn for trivial answers, single known-file edits, direct user-specified commands, or when a normal tool call is cheaper than consulting KRn. This keeps the default integration small and fail-open while still making automatic use operationally clear.
+The orientation rule remains bypassable for trivial answers, exact known-file/content requests, explicit user-requested shell commands, one clearly sufficient cheap direct operation, or unavailable KRn. The integration does not install prompt hooks, mutate Codex state databases, force KRn on every task, or claim that KRn reduces model tokens, reasoning, or wall time without measurements. Re-running integration replaces all well-formed KRn-managed blocks with the current policy and leaves unrelated AGENTS.md content in place.
 
 `--cache` requires at least one `--input`.
+
+### Structural Go edits
+
+`krn code` is a deliberately narrow mechanical interface. It supports exact top-level Go `func`, `type`, `var`, and single-name `const` declarations in a `.go` file inside the current repository:
+
+```sh
+krn code read --file internal/user.go --entity CreateUser
+krn code replace --file internal/user.go --entity CreateUser --content-file /tmp/create-user.go
+krn code insert-before --file internal/user.go --entity CreateUser --content 'func helper() {}'
+krn code insert-after --file internal/user.go --entity CreateUser --content 'func audit() {}'
+krn code remove --file internal/user.go --entity audit
+```
+
+The entity name must resolve to exactly one supported top-level declaration. Missing, ambiguous, unsupported, malformed, or stale targets fail with a non-zero status and leave the file unchanged. Replacement content must contain exactly one supported declaration of the same kind and name as the target. Inserted content must contain exactly one supported declaration; an existing entity name is rejected unless the exact declaration is already present, in which case the insertion is a no-op. KRn parses the candidate result with Go's standard parser, generates a unified diff, and writes atomically only after validation. It preserves unrelated source bytes and does not format or semantically interpret code.
+
+This boundary is intentional: the model decides the declaration content and semantic intent; KRn resolves the explicit location, performs the byte-span transformation, validates syntax, and exposes the resulting diff. Language support is currently Go only, and methods, multi-name `var`/`const` specs, imports, and semantic/compiler validation are outside this interface. Run `go test ./...` and the repository's verification checks after edits.
 
 ### End-to-end A/B evaluation
 

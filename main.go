@@ -21,16 +21,19 @@ const version = "0.3.0"
 const cacheSchema = "2"
 const markerStart = "<!-- KRN:BEGIN -->"
 const markerEnd = "<!-- KRN:END -->"
-const codexText = `KRn is available globally. Use it only when it is likely to reduce model context, repeated exploration, or unreconstructable reasoning.
+const codexText = `KRn is available globally as a deterministic repository substrate. Decide routing before the first shell or file-reading tool call.
 
-Routing:
-- For repository/code-change tasks that need orientation or may benefit from prior KRn state, start with ` + "`krn context --json`" + `.
-- Before broad file reading or repeated search, prefer ` + "`krn find QUERY --json --max-files N`" + ` for bounded evidence with a recoverable full log.
+Routing decision:
+- If the task requires learning the repository before answering or editing, the first operation MUST be ` + "`krn context --json`" + `. Repository orientation includes questions about what the project is, how it is structured, where behavior is implemented, and code changes whose target is not already known.
+- After context, if more repository evidence is needed, prefer ` + "`krn find QUERY --json --max-files N`" + ` before broad manual traversal, repeated search, or reading many files. Use the bounded projection and follow its recoverable log path when necessary.
+- For explicit mechanical edits to supported Go declarations, use ` + "`krn code read|replace|insert-before|insert-after|remove`" + `; do not use it for semantic decisions.
 - For verification, prefer ` + "`krn verify --level fast|full --json`" + ` when its discovered checks fit the task; otherwise run the project-native focused command directly.
 - Use ` + "`krn exec --cache --input PATH ... -- COMMAND ...`" + ` only for deterministic repeated commands with explicit input dependencies; add ` + "`--verified`" + ` only after an external check verified the result.
 - Use ` + "`krn state`" + ` only for irreducible durable facts: objective, constraints, proven facts, open questions, or negative results that are not cheaply reconstructable from Git/files/tests.
 
-Skip KRn for trivial answers, single known-file edits, direct user-specified commands, or when a normal tool call is cheaper than consulting KRn. Do not dump large KRn logs into context; use bounded projections and paths to recover details only when needed.`
+Bypass the orientation rule only when repository inspection is unnecessary or KRn cannot provide the evidence: a trivial answer, an exact known file/content named by the user, an explicit user-requested shell command, one clearly sufficient cheap direct operation, or unavailable KRn. Do not dump large KRn logs into context. Do not invoke KRn for every task; preserve these bypasses.
+
+The model remains responsible for semantic decisions and edits. KRn does not replace Codex, add a hook or daemon, or mutate Codex configuration.`
 
 type repo struct{ Root, GitDir, Private string }
 type stateFile struct {
@@ -75,6 +78,8 @@ func main() {
 		err = contextCmd(os.Args[2:])
 	case "find":
 		err = findCmd(os.Args[2:])
+	case "code":
+		err = codeCmd(os.Args[2:])
 	case "verify":
 		err = verifyCmd(os.Args[2:])
 	case "state":
@@ -102,7 +107,7 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("krn " + version + "\nusage: krn context|find|verify|state|exec|eval|integrate|doctor|uninstall")
+	fmt.Println("krn " + version + "\nusage: krn context|find|code|verify|state|exec|eval|integrate|doctor|uninstall")
 }
 
 func discover() (repo, error) {
@@ -717,20 +722,22 @@ func integrateCmd(args []string) error {
 		home = filepath.Join(home, ".codex")
 	}
 	p := filepath.Join(home, "AGENTS.md")
-	b, _ := os.ReadFile(p)
+	b, err := os.ReadFile(p)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
 	s := string(b)
-	start, end := strings.Index(s, markerStart), strings.Index(s, markerEnd)
 	if args[0] == "remove-codex" {
-		if start >= 0 && end > start {
-			s = s[:start] + s[end+len(markerEnd):]
-			s = strings.Replace(s, "\n\n", "\n", 1)
+		var found bool
+		s, found = rewriteManagedBlocks(s, "")
+		if found {
 			return os.WriteFile(p, []byte(s), 0600)
 		}
 		return nil
 	}
-	block := markerStart + "\n" + codexText + "\n" + markerEnd
-	if start >= 0 && end > start {
-		s = s[:start] + block + s[end+len(markerEnd):]
+	block := managedCodexBlock()
+	if rewritten, found := rewriteManagedBlocks(s, block); found {
+		s = rewritten
 	} else {
 		if len(s) > 0 && !strings.HasSuffix(s, "\n") {
 			s += "\n"
@@ -745,6 +752,50 @@ func integrateCmd(args []string) error {
 	}
 	fmt.Println("Codex integration installed")
 	return nil
+}
+
+func managedCodexBlock() string {
+	return markerStart + "\n" + codexText + "\n" + markerEnd
+}
+
+// rewriteManagedBlocks replaces the first well-formed KRn block and removes
+// later KRn blocks. Malformed marker pairs are left untouched as user content.
+func rewriteManagedBlocks(s, replacement string) (string, bool) {
+	var out strings.Builder
+	cursor := 0
+	found := false
+	for cursor < len(s) {
+		relStart := strings.Index(s[cursor:], markerStart)
+		if relStart < 0 {
+			break
+		}
+		start := cursor + relStart
+		relEnd := strings.Index(s[start+len(markerStart):], markerEnd)
+		if relEnd < 0 {
+			break
+		}
+		end := start + len(markerStart) + relEnd + len(markerEnd)
+		out.WriteString(s[cursor:start])
+		replaced := false
+		if !found {
+			if replacement != "" {
+				out.WriteString(replacement)
+				replaced = true
+			}
+			found = true
+		}
+		// A newline directly owned by the managed block keeps removal from
+		// leaving an extra blank line and keeps replacement byte-stable.
+		if end < len(s) && s[end] == '\n' {
+			end++
+			if replaced {
+				out.WriteByte('\n')
+			}
+		}
+		cursor = end
+	}
+	out.WriteString(s[cursor:])
+	return out.String(), found
 }
 func doctorCmd() error {
 	r, e := discover()

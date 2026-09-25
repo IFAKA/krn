@@ -2,4 +2,4 @@
 set -eu
 GOCACHE="${KRN_GOCACHE:-${TMPDIR:-/tmp}/krn-gocache}"
 export GOCACHE
-exec go run . "$@"
+exec go run ./cmd/krn "$@"

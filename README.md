@@ -32,7 +32,7 @@ cd krn
 ./install.sh
 ```
 
-`install.sh` requires Go 1.24+, builds KRn, installs it at `~/.local/bin/krn`, and adds a small managed routing policy to `$CODEX_HOME/AGENTS.md` or `~/.codex/AGENTS.md`. If `krn` is not on `PATH`, add `~/.local/bin` to it.
+`install.sh` requires Go 1.24+, builds KRn, installs it at `~/.local/bin/krn`, installs the required `ast-grep` CLI when it is missing, and adds a small managed routing policy to `$CODEX_HOME/AGENTS.md` or `~/.codex/AGENTS.md`. It tries npm, Cargo, and pip (installing into `~/.local` without sudo), then falls back to Homebrew, which installs into its own prefix. If either command is not on `PATH`, add `~/.local/bin` to it.
 
 ## Use
 
@@ -141,7 +141,7 @@ KRn does not infer undeclared dependencies. Cache safety therefore depends on ca
 ```text
 krn context [--json]
 krn find QUERY [--json] [--max-files N]
-krn code read|replace|insert-before|insert-after|remove --file PATH --entity NAME [--content TEXT|--content-file PATH]
+krn code read|replace|insert-before|insert-after|remove --file PATH --pattern PATTERN [--lang LANG] [--content TEXT|--content-file PATH]
 krn verify [--level fast|full] [--json]
 krn state show
 krn state set objective TEXT
@@ -161,21 +161,21 @@ The orientation rule remains bypassable for trivial answers, exact known-file/co
 
 `--cache` requires at least one `--input`.
 
-### Structural Go edits
+### Structural code edits
 
-`krn code` is a deliberately narrow mechanical interface. It supports exact top-level Go `func`, `type`, `var`, and single-name `const` declarations in a `.go` file inside the current repository:
+`krn code` is a language-independent mechanical interface backed by the externally maintained `ast-grep` CLI. The installer provisions ast-grep into the user-local environment when it is missing. If KRn is installed another way, install ast-grep separately and put it on `PATH`. Patterns are structural ast-grep patterns, and language is inferred from the file extension unless `--lang` is supplied:
 
 ```sh
-krn code read --file internal/user.go --entity CreateUser
-krn code replace --file internal/user.go --entity CreateUser --content-file /tmp/create-user.go
-krn code insert-before --file internal/user.go --entity CreateUser --content 'func helper() {}'
-krn code insert-after --file internal/user.go --entity CreateUser --content 'func audit() {}'
-krn code remove --file internal/user.go --entity audit
+krn code read --file src/user.ts --pattern 'function CreateUser() { $$$BODY }'
+krn code replace --file src/user.ts --pattern 'function CreateUser() { $$$BODY }' --content 'function CreateUser() { return 42 }'
+krn code insert-before --file script.sh --pattern 'function deploy() { $$$BODY }' --content 'function log() { echo ok; }'
+krn code insert-after --file .gitlab-ci.yml --lang yaml --pattern 'build: { $$$JOB }' --content 'test: { script: npm test }'
+krn code remove --file styles.scss --lang css --pattern '$COLOR: red;'
 ```
 
-The entity name must resolve to exactly one supported top-level declaration. Missing, ambiguous, unsupported, malformed, or stale targets fail with a non-zero status and leave the file unchanged. Replacement content must contain exactly one supported declaration of the same kind and name as the target. Inserted content must contain exactly one supported declaration; an existing entity name is rejected unless the exact declaration is already present, in which case the insertion is a no-op. KRn parses the candidate result with Go's standard parser, generates a unified diff, and writes atomically only after validation. It preserves unrelated source bytes and does not format or semantically interpret code.
+The pattern must resolve to exactly one match. Missing, ambiguous, unsupported, unavailable-grammar, malformed, stale, or invalid targets fail with a non-zero status and leave the file unchanged. KRn verifies ast-grep's UTF-8 byte range against the local source, rejects the edit if the candidate has more tree-sitter `ERROR` nodes than the original (so files with pre-existing errors stay editable), additionally parses `.go` results with Go's standard parser, generates a unified diff, and writes atomically only after validation. Tree-sitter recovers silently from some truncated input, such as a missing closing brace in TypeScript or an unterminated `if` in Bash, so this check is not a full syntax guarantee outside Go. Repeating an insert with identical adjacent content is a no-op. It preserves unrelated source bytes and does not format or semantically interpret code.
 
-This boundary is intentional: the model decides the declaration content and semantic intent; KRn resolves the explicit location, performs the byte-span transformation, validates syntax, and exposes the resulting diff. Language support is currently Go only, and methods, multi-name `var`/`const` specs, imports, and semantic/compiler validation are outside this interface. Run `go test ./...` and the repository's verification checks after edits.
+This boundary is intentional: the model decides the structural pattern, content, and semantic intent; KRn resolves the external match, performs the byte-span transformation, validates the candidate, and exposes the resulting diff. Examples can target TypeScript, JavaScript, Bash, YAML/GitLab CI, Go, CSS, and CSS-compatible SCSS. The installed ast-grep grammar set determines the available language names; for example, current ast-grep releases provide `css` but may not provide a separate `scss` grammar, so unsupported `--lang` values fail cleanly. KRn does not maintain language grammars or syntax-version tables; parser and grammar updates belong to ast-grep and Tree-sitter tooling. Semantic validation, compilation, formatting, and type checking remain repository-native concerns. Run `go test ./...` and the repository's verification checks after edits.
 
 ### End-to-end A/B evaluation
 
@@ -400,6 +400,25 @@ It does not remove repository-private `.git/krn` records.
 ## Contributing
 
 Keep changes small, deterministic, inspectable, and falsifiable.
+
+The source tree is organized by feature: each command lives in its own package, so a change to one command only requires reading that package.
+
+```text
+cmd/krn/              command dispatch and end-to-end tests of the built binary
+internal/workspace/   shared core: repository discovery, .git/krn storage, bounded output, metrics
+internal/context/     krn context
+internal/find/        krn find
+internal/code/        krn code (ast-grep structural edits)
+internal/verify/      krn verify
+internal/state/       krn state
+internal/exec/        krn exec and the explicit-input cache
+internal/eval/        krn eval (A/B harness)
+internal/integrate/   Codex routing policy, krn integrate, krn uninstall
+internal/doctor/      krn doctor
+internal/testutil/    helpers shared by tests
+```
+
+Feature packages depend on `workspace`; `context` also reads `state`, and `eval` uses the policy from `integrate`.
 
 Add or update tests for behavior.
 

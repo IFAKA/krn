@@ -1,10 +1,9 @@
-package main
+package eval
 
 import (
 	"bufio"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +11,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"example.com/krn/internal/integrate"
+	"example.com/krn/internal/workspace"
 )
 
 type evalMetric struct {
@@ -49,8 +51,8 @@ type evalTelemetry struct {
 	Interventions int
 }
 
-func evalCmd(args []string) error {
-	f := flagSet("eval")
+func Run(args []string) error {
+	f := workspace.FlagSet("eval")
 	taskPath := f.String("task", "", "path to the identical task prompt")
 	verifyCommand := f.String("verify", "", "objective verification command")
 	model := f.String("model", "", "Codex model (same for A and B)")
@@ -68,11 +70,11 @@ func evalCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	r, err := discover()
+	r, err := workspace.Discover()
 	if err != nil {
 		return err
 	}
-	head, err := git(r.Root, "rev-parse", "HEAD")
+	head, err := workspace.Git(r.Root, "rev-parse", "HEAD")
 	if err != nil {
 		return fmt.Errorf("resolve source HEAD: %w", err)
 	}
@@ -105,11 +107,11 @@ func evalCmd(args []string) error {
 		report.Runs[variant] = m
 	}
 	report.Deltas = evalDeltas(report.Runs["A-codex-alone"], report.Runs["B-codex-plus-krn"])
-	if err := writeJSON(filepath.Join(evidence, "report.json"), report); err != nil {
+	if err := workspace.WriteJSON(filepath.Join(evidence, "report.json"), report); err != nil {
 		return err
 	}
 	if *js {
-		return jsonPrint(report)
+		return workspace.PrintJSON(report)
 	}
 	fmt.Printf("evaluation evidence: %s\n", evidence)
 	for _, variant := range []string{"A-codex-alone", "B-codex-plus-krn"} {
@@ -117,9 +119,6 @@ func evalCmd(args []string) error {
 	}
 	return nil
 }
-
-// flagSet keeps eval's flag parsing independent from the older command helpers.
-func flagSet(name string) *flag.FlagSet { return flag.NewFlagSet(name, flag.ContinueOnError) }
 
 func cloneAtHead(source, destination string) error {
 	cmd := exec.Command("git", "clone", "--quiet", "--no-hardlinks", source, destination)
@@ -149,7 +148,7 @@ func runEvalVariant(v evalVariant) (evalMetric, error) {
 		return evalMetric{}, err
 	}
 	if v.Variant == "B-codex-plus-krn" {
-		if err := os.WriteFile(filepath.Join(codexHome, "AGENTS.md"), []byte(codexText+"\n"), 0600); err != nil {
+		if err := os.WriteFile(filepath.Join(codexHome, "AGENTS.md"), []byte(integrate.CodexText+"\n"), 0600); err != nil {
 			return evalMetric{}, err
 		}
 	}

@@ -9,7 +9,7 @@ REPO="$TMP/repo"
 BIN="$TMP/krn"
 mkdir "$REPO"
 (cd "$REPO" && git init -q && git config user.email bench@example.invalid && git config user.name bench && printf 'input\n' > input.txt && printf 'unrelated\n' > unrelated.txt && printf '0\n' > exec-count && git add . && git commit -qm init)
-(cd "$ROOT" && go build -o "$BIN" .)
+(cd "$ROOT" && go build -o "$BIN" ./cmd/krn)
 
 command_body='n=$(cat exec-count); n=$((n + 1)); printf "%s\\n" "$n" > exec-count; printf stable'
 run_cached() {

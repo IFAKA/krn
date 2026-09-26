@@ -63,9 +63,7 @@ func Build(r workspace.Repo, focus string, tokens int) (string, error) {
 	files := loadTags(r, paths, blobs)
 	budget := tokens * bytesPerToken
 	header := renderHeader(r.Root, paths)
-	if len(header) > budget/3 {
-		header = header[:budget/3]
-	}
+	header = clipHeader(header, budget/3)
 	defs := rank(files, find.Terms(focus), dirty)
 	return header + fit(defs, r.Root, budget-len(header)), nil
 }
@@ -487,6 +485,23 @@ func renderHeader(root string, paths []string) string {
 	}
 	fmt.Fprintf(&b, "layout: %s\n\n", strings.Join(parts, " "))
 	return b.String()
+}
+
+// clipHeader shortens header to at most max bytes at a word boundary, keeping the
+// blank line that separates it from the definitions.
+func clipHeader(header string, max int) string {
+	if len(header) <= max {
+		return header
+	}
+	const sep = "\n\n"
+	if max <= len(sep) {
+		return ""
+	}
+	cut := header[:max-len(sep)]
+	if i := strings.LastIndexAny(cut, " \n"); i > 0 {
+		cut = cut[:i]
+	}
+	return strings.TrimRight(cut, " \n") + sep
 }
 
 func projectAbout(root string) string {

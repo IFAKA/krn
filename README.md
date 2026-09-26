@@ -2,7 +2,7 @@
 
 **Make coding agents repeat less deterministic work.**
 
-KRn is a research-informed deterministic optimization substrate for coding agents such as Codex and Claude Code. It reconstructs repository facts, bounds retrieved evidence, verifies work, records irreducible state and execution evidence, and safely reuses deterministic computation when explicit dependencies establish that reuse remains valid.
+KRn is a research-informed deterministic optimization substrate for coding agents such as Codex, Claude Code, and pi. It reconstructs repository facts, bounds retrieved evidence, verifies work, records irreducible state and execution evidence, and safely reuses deterministic computation when explicit dependencies establish that reuse remains valid.
 
 Codex or Claude Code remains the agent. KRn is the layer beneath and around it:
 
@@ -38,10 +38,70 @@ cd krn
 
 ```sh
 cd any-git-project
-codex    # or: claude
+codex    # or: claude, or: pi
 ```
 
-There is no `krn init`. The integration is global (per agent, via `krn integrate codex|claude`); the commands operate on the Git repository containing the current directory.
+There is no `krn init`. The integration is global: an instruction block per agent for Codex and Claude Code (`krn integrate codex|claude`), and an extension for pi (copied by `install.sh`). The commands operate on the Git repository containing the current directory. pi's model and provider configuration is pi's own and outside KRn; see [Local models with pi](#local-models-with-pi).
+
+## Benchmarks
+
+Two kinds of measurement exist. Neither covers Codex or Claude Code end to end: whether the instruction-based integration changes their correctness, tokens, or wall time has not been measured.
+
+### Local model with pi: correctness per minute
+
+`krn eval-pi`, 2026-09-26, M4 Pro (48 GB), NVIDIA-Nemotron-3.5-Lightning-30B-A3B-oQ4 served by oMLX (thinking off), pi 0.85.1. 12 tasks × 3 seeds = 36 runs per variant, each on a fresh detached clone:
+
+* 9 localization questions ("where is X computed/stored/decided"), 3 each on a JS PWA, a TypeScript app, and this repository at a pinned commit, graded by regexes over the final answer against ground truth checked by reading the code;
+* 3 edit tasks on `eval/fixture`, graded by their verify command.
+
+Variants are parts of the [pi extension](#local-models-with-pi): A bounds search output, B adds the `find_code` tool, C injects the first-turn map.
+
+| variant | correct | correct/min | median wall | mean wall | mean turns | mean uncached input tok | mean output tok |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| none | 16/36 (44%) | 0.97 | 14.7 s | 27.4 s | 7.4 | 6,115 | 1,036 |
+| A | 16/36 (44%) | 0.87 | 17.2 s | 30.7 s | 8.8 | 6,579 | 1,179 |
+| A+B | 22/36 (61%) | 1.11 | 21.6 s | 33.0 s | 9.8 | 7,420 | 1,193 |
+| A+B+C | 29/36 (81%) | 1.64 | 23.7 s | 29.5 s | 7.9 | 6,968 | 1,069 |
+| C ² | 31/36 (86%) | 1.61 | 28.7 s | 32.0 s | 7.7 | 8,042 | 1,094 |
+| B+C ² | 30/36 (83%) | 1.41 | 27.7 s | 35.5 s | 7.6 | 7,893 | 1,117 |
+
+² Second run, same tasks and seeds, about 40 minutes later.
+
+What this shows, and does not:
+
+* The map (C) accounts for the gain: C alone matched A+B+C, so only C is on by default. The model called `find_code` in about one run in ten when it was offered; bounding (A) alone changed nothing.
+* Without KRn, 20 of the 27 localization runs answered after zero tool calls and all 20 were wrong (invented files or functions); all 7 runs that used a tool were correct. The map puts evidence in context without the model having to decide to search.
+* The three edit tasks were solved in nearly every variant; the difference is in localization.
+* The median run is slower with the map (more correct answers take more turns reading code), but correct answers per minute rise from 0.97 to about 1.6.
+* One model, one machine, 36 runs per variant. A gap of three or four correct answers is within seed noise. Two of the three source repositories are private, so the exact manifest is not reproducible elsewhere; the harness is.
+
+Raw results and per-task tables: [`eval/results/2026-09-26-pi-local/`](eval/results/2026-09-26-pi-local/). Reproduce with your own manifest:
+
+```sh
+krn eval-pi --model MODEL --manifest eval/pi-local-manifest.json --variants none,A,AB,ABC --seeds 3
+```
+
+### Deterministic execution cache
+
+`benchmark.sh` builds KRn, runs `krn exec --cache` in a scratch repository, and checks each case by counting real executions. Output on 2026-09-26:
+
+| case | executions | cumulative cache hits | result |
+|---|---:|---:|---|
+| unchanged dependency | 1 | 1 | PASS |
+| changed declared dependency | 2 | 1 | PASS |
+| unrelated file | 2 | 2 | PASS |
+| failed execution | 2 | 2 | PASS |
+| invalid applicability (different input) | 3 | 5 | PASS |
+| malformed/stale cache | 4 | 2 | PASS |
+| baseline repeated execution | 2 | 0 | PASS |
+| KRn cache hits | 2 | 2 | PASS |
+| unchanged workload saved executions | 1 | 1 | PASS |
+
+This proves command reuse under the declared-dependency model (see [Current limitation](#current-limitation)), not model-level savings.
+
+```sh
+./benchmark.sh
+```
 
 ## Why KRn?
 
@@ -105,7 +165,9 @@ tools prove facts        model judges, plans, and synthesizes
 The main path is conservative: KRn reconstructs what it can, gathers bounded evidence, lets deterministic tools and agent reasoning meet at verification, and records only verified work. The reuse path is narrower: cached results are reused only while their explicit dependencies still match.
 
 * `context` reconstructs Git root, branch, commit, changed paths, detected ecosystems, and saved task state.
-* `find` uses ripgrep, returns a bounded file/snippet projection, and saves the full search output for recovery.
+* `find` turns plain words or identifiers into ripgrep searches, ranks files, returns a bounded file/snippet projection, and saves the full search output for recovery.
+* `map` parses source files with tree-sitter and prints a ranked, signatures-only repository map fitted to a token budget.
+* `code` applies ast-grep structural edits whose pattern must match exactly once.
 * `verify` discovers safe project-native checks from `.kern/config.json`, `package.json`, Go, Cargo, or pytest. Unknown projects remain `unknown`; KRn does not invent a command.
 * `exec` runs structured local commands, bounds output shown to the caller, records metrics, and can cache executions only when explicit input dependencies are supplied.
 * Cached executions are reused only when their command, repository provenance, schema, declared dependencies, dependency fingerprints, metadata, and result integrity remain valid.
@@ -149,9 +211,10 @@ krn state set objective TEXT
 krn state add constraint|proven|open|negative TEXT
 krn state clear
 krn exec [--verified] [--cache --input PATH ...] -- COMMAND ARGS...
-krn eval --task PATH --verify COMMAND --model MODEL --reasoning-effort EFFORT [--output DIR] [--json]
-krn eval-suite [--manifest PATH] --model MODEL --reasoning-effort EFFORT [--output DIR] [--freeze-only] [--json]
-krn eval-pi --model MODEL [--manifest PATH] [--variants none,A,AB,ABC] [--seeds N] [--tasks IDS] [--output DIR]
+krn eval --task PATH --verify COMMAND --model MODEL --reasoning-effort EFFORT [--codex PATH] [--output DIR] [--json]
+krn eval-suite [--manifest PATH] --model MODEL --reasoning-effort EFFORT [--codex PATH] [--output DIR] [--freeze-only] [--json]
+krn eval-pi --model MODEL [--provider NAME] [--manifest PATH] [--variants none,A,AB,ABC] [--seeds N] [--tasks IDS]
+            [--agent-dir DIR] [--extension PATH] [--krn PATH] [--workdir DIR] [--timeout DURATION] [--output DIR]
 krn integrate codex|remove-codex|claude|remove-claude
 krn doctor
 krn uninstall
@@ -163,6 +226,14 @@ The Codex and Claude Code integrations are instruction-based and install the sam
 The orientation rule remains bypassable for trivial answers, exact known-file/content requests, explicit user-requested shell commands, one clearly sufficient cheap direct operation, or unavailable KRn. The integration does not install prompt hooks, mutate agent state databases or settings, force KRn on every task, or claim that KRn reduces model tokens, reasoning, or wall time without measurements. Re-running integration replaces all well-formed KRn-managed blocks with the current policy and leaves unrelated `AGENTS.md`/`CLAUDE.md` content in place.
 
 `--cache` requires at least one `--input`.
+
+The cache key includes the exact argv, repository root, cache schema, canonicalized dependencies, and content fingerprints of every declared input.
+
+A changed declared input, command, repository root, malformed record, stale schema, tampered result, or provenance mismatch produces a cache miss.
+
+Unknown side effects are never inferred safe. Callers must declare the complete inputs that make a command reusable.
+
+`--verified` is an external assertion recorded with an execution. It is not proof of command purity or complete dependency coverage.
 
 ### Structural code edits
 
@@ -203,7 +274,7 @@ The verifier is run after Codex exits in each fresh checkout. A run is verified 
 
 `krn find` takes plain words or identifiers. It splits identifiers (camelCase, snake_case), drops stopwords, weights terms by rarity, prefers definition lines and files that match several terms, and prints at most `--max-files` files (default 5), each with up to three hits: line number, enclosing symbol, and two lines of context. Output stays under `--budget` bytes (default 2400). `--regex` restores the old raw-pattern behaviour.
 
-`krn map` prints a signatures-only repository map for JS/TS/TSX, Python, and Go: tree-sitter definitions and references, a reference graph ranked with personalized PageRank toward `--focus` terms and dirty files, fitted to `--tokens` (default 800). Tags are cached in `.git/krn/cache/map/` by blob hash.
+`krn map` prints a signatures-only repository map for JS/TS/TSX, Python, and Go: tree-sitter definitions and references, a reference graph ranked with personalized PageRank toward `--focus` terms and dirty files, fitted to `--tokens` (default 800). It starts with a short header (the README's first paragraph or the manifest description, and the top-level directory layout) that takes at most a third of the budget and is cut at a word boundary. Tags are cached in `.git/krn/cache/map/` by blob hash.
 
 `integrations/pi/krn.ts` is a [pi](https://github.com/earendil-works/pi) extension. `install.sh` copies it to `~/.pi/agent/extensions/krn/index.ts` when pi is detected; `krn uninstall` removes it. It has three parts. Only the map is on by default; set a variable to `1` to enable a part or `0` to disable it:
 
@@ -211,39 +282,13 @@ The verifier is run after Codex exits in each fresh checkout. A run is verified 
 * `KRN_PI_TOOL` (B, default off): registers a `find_code` tool backed by `krn find`.
 * `KRN_PI_BOUND` (A, default off): output from grep/find/ls or search commands run in bash, over 6000 bytes, is cut to 40 lines; the full text is saved under `.git/krn/runs/`. An empty search gets `krn find` hits for the same words appended.
 
-Every part fails open outside a Git repository or when `krn` errors.
+Every part fails open outside a Git repository or when `krn` errors. Further variables: `KRN_PI_MAP_TOKENS` (map budget, default 800), `KRN_PI_BOUND_BYTES` (bounding threshold, default 6000), and `KRN_BIN` (the `krn` executable, default `krn` on `PATH`).
 
-`krn eval-pi` runs pi non-interactively (`pi -p --mode json --no-session --no-extensions`) on fresh detached clones, once per variant, task, and seed. It grades the final answer against regexes and optional verify commands, and writes `results.jsonl` and `report.md`.
+`krn eval-pi` runs pi non-interactively (`pi -p --mode json --no-session --no-extensions`, plus `-e` with the extension for KRn variants) on fresh detached clones, once per variant, task, and seed. It grades the final answer against regexes and optional verify commands, and writes `results.jsonl` and `report.md`.
 
-Measured 2026-09-26 on an M4 Pro (48 GB) with NVIDIA-Nemotron-3.5-Lightning-30B-A3B-oQ4 served by oMLX: 12 tasks (9 localization questions on three real JS/TS/Go repositories, 3 fixture edit tasks from `eval/`) × 3 seeds, `eval/pi-local-manifest.json`:
-
-| variant | correct | correct/min | median wall | mean turns | find_code calls/run |
-|---|---:|---:|---:|---:|---:|
-| none | 16/36 (44%) | 0.97 | 14.7 s | 7.4 | – |
-| A | 16/36 (44%) | 0.87 | 17.2 s | 8.8 | – |
-| A+B | 22/36 (61%) | 1.11 | 21.6 s | 9.8 | 0.1 |
-| A+B+C | 29/36 (81%) | 1.64 | 23.7 s | 7.9 | 0.1 |
-
-A second run (same tasks and seeds, about 40 minutes later) measured the leaner combinations:
-
-| variant | correct | correct/min | median wall | mean turns | find_code calls/run |
-|---|---:|---:|---:|---:|---:|
-| C | 31/36 (86%) | 1.61 | 28.7 s | 7.7 | – |
-| B+C | 30/36 (83%) | 1.41 | 27.7 s | 7.6 | 0.0 |
-
-The map alone matched all three parts, so it is the only default. The model called `find_code` in about one run in ten when it was offered, and bounding output (A) alone changed nothing. On the 27 localization runs without KRn, the model answered 20 times after zero tool calls, and all 20 answers were wrong (invented files or functions); all 7 runs that used a tool were correct. The map helps because it puts evidence in context without the model having to decide to search: 9 A+B+C runs were correct with zero tool calls. This is one model, one machine, and 36 runs per variant; a gap of three or four correct answers is within seed noise.
-
-One task failed under every map variant: asked where a rest timer's end time is computed, the model cited the first line of `startRest` instead of the assignment three lines below it, and the default constant instead of the per-exercise value. That is one task out of twelve, so no map change was made for it; it is recorded here as a known weakness in precise line citation.
+Measured results are in [Benchmarks](#benchmarks). The map alone matched all three parts there, so it is the only default. One task failed under every map variant: asked where a rest timer's end time is computed, the model cited the first line of `startRest` instead of the assignment three lines below it, and the default constant instead of the per-exercise value. Signatures show where a function starts, not which line inside it does the work; this is a known weakness in precise line citation.
 
 To use it interactively, pi's `models.json` needs the served model and `settings.json` needs it as `defaultModel` (the eval passes `--provider`/`--model` and an isolated `PI_CODING_AGENT_DIR` instead). With `"reasoning": false` and a `contextWindow` no larger than the server's limit, `pi` in any Git repository gets the map on its first prompt. When scripting `pi -p`, redirect stdin (`pi -p '...' </dev/null`): pi reads piped stdin as extra prompt input and waits for it to close. `krn eval-pi` runs pi with stdin on the null device.
-
-The cache key includes the exact argv, repository root, cache schema, canonicalized dependencies, and content fingerprints of every declared input.
-
-A changed declared input, command, repository root, malformed record, stale schema, tampered result, or provenance mismatch produces a cache miss.
-
-Unknown side effects are never inferred safe. Callers must declare the complete inputs that make a command reusable.
-
-`--verified` is an external assertion recorded with an execution. It is not proof of command purity or complete dependency coverage.
 
 ## Storage and privacy
 
@@ -257,6 +302,7 @@ Repository-private KRn data is stored under the Git directory:
 <repo>/.git/krn/state.json
 <repo>/.git/krn/metrics.jsonl
 <repo>/.git/krn/cache/<content-key>.json
+<repo>/.git/krn/cache/map/               tree-sitter tags for krn map, by blob hash
 <repo>/.git/krn/runs/<timestamp>-<operation>.log
 ```
 
@@ -284,7 +330,7 @@ KRn therefore treats its architecture as falsifiable and distinguishes research-
 | ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Bounded context and recoverable projections             | Retrieval quality is not the same as dumping more context into the model; KRn shows a small projection while retaining recoverable full evidence.            | **[ContextBench: A Benchmark for Context Retrieval in Coding Agents — Han Li et al., 2026, arXiv preprint](https://arxiv.org/abs/2602.05892)** — Evaluates 1,136 tasks across 66 repositories and reports recall/precision gaps plus a gap between explored and used context.                                                                                                          |
 | Deterministic retrieval before model reasoning          | Repository facts that ordinary tools can establish reliably do not require probabilistic inference.                                                          | **[ContextBench: A Benchmark for Context Retrieval in Coding Agents — Han Li et al., 2026, arXiv preprint](https://arxiv.org/abs/2602.05892)** — Reports recall-over-precision behavior in evaluated models, motivating bounded retrieval rather than indiscriminate context accumulation.                                                                                             |
-| Do not assume one retrieval family is universally best  | KRn uses ripgrep and explicit repository facts by default rather than adding embeddings, a vector database, or a repository map without workload evidence.   | **[Agent Retrieval Bench: Evaluating Repository Context Retrieval for Coding Agents — Bowen Qin and Yi Xie, 2026, arXiv preprint](https://arxiv.org/abs/2607.24882)** — Evaluates 427 samples from 25 repositories and reports that lexical, RepoMap, embedding, and agent-context approaches perform differently across tasks and metrics; no retrieval family dominates universally. |
+| Do not assume one retrieval family is universally best  | KRn uses ripgrep and explicit repository facts rather than embeddings or a vector database; it added a repository map only after a local ablation showed a gain. | **[Agent Retrieval Bench: Evaluating Repository Context Retrieval for Coding Agents — Bowen Qin and Yi Xie, 2026, arXiv preprint](https://arxiv.org/abs/2607.24882)** — Evaluates 427 samples from 25 repositories and reports that lexical, RepoMap, embedding, and agent-context approaches perform differently across tasks and metrics; no retrieval family dominates universally. |
 | Context externalization and compression                 | Long trajectories can accumulate irrelevant history; KRn retains full evidence outside active model context and exposes bounded projections.                 | **[ACON: Optimizing Context Compression for Long-horizon LLM Agents — Minki Kang et al., 2026, Lifelong Agent @ ICLR 2026 workshop](https://openreview.net/forum?id=x0alNh5o8v)** — Reports 26–54% lower peak tokens in its evaluated agent settings while largely preserving task performance. KRn does not claim those results for itself.                                           |
 | Dependency-aware caching and invalidation               | Previously computed results should be reused only while the inputs determining them remain valid.                                                            | **[Build Systems à la Carte — Andrey Mokhov, Neil Mitchell, and Simon Peyton Jones, 2018, ICFP](https://doi.org/10.1145/3236774)** — Separates dependency structure from rebuild decisions and analyzes persistent build information, motivating explicit dependencies and conservative invalidation.                                                                                  |
 | Do not infer semantic abstraction from repetition alone | Repeated shell commands do not establish semantic equivalence or safe parameterization. KRn therefore reports exact repetition only as a review signal.      | **[DreamCoder: Bootstrapping Inductive Program Synthesis with Wake-Sleep Library Learning — Kevin Ellis et al., 2021, PLDI](https://doi.org/10.1145/3453483.3454080)** — Studies library learning inside a defined synthesis language and domain. It does not establish that arbitrary agent execution trajectories can be safely generalized from repetition alone.                   |
@@ -320,6 +366,9 @@ The source, tests, and benchmark establish:
 * malformed/stale/tampered cache rejection
 * JSONL metrics
 * marker-based idempotent Codex and Claude Code integration
+* ranked natural-language search (`krn find`)
+* token-budgeted, focus-ranked repository map with a blob-hash tag cache (`krn map`)
+* pi extension install and marker-checked removal
 * argument validation
 
 `go test ./...`, `go test -race ./...`, `go vet ./...`, shell syntax checks, and the benchmark provide executable checks for these local behaviors.
@@ -353,7 +402,7 @@ tampered/mismatched record   → cache miss
 
 This establishes command-execution reuse under the declared dependency model.
 
-It does not establish model-level efficiency.
+It does not establish model-level efficiency. The one agent-level measurement is the pi evaluation in [Benchmarks](#benchmarks): one local model on one machine, where the first-turn map raised localization correctness and correct answers per minute.
 
 ### KRn-specific hypotheses
 
@@ -361,7 +410,7 @@ The broader hypothesis remains unproven:
 
 > Moving deterministic or reconstructable work outside repeated model-driven execution may reduce the cognition or context required per verified useful coding outcome.
 
-Current measurements do **not** establish:
+Outside that single local pi evaluation, current measurements do **not** establish:
 
 * fewer agent tokens
 * less agent reasoning
@@ -419,9 +468,9 @@ KRn deliberately fails open where it cannot establish those properties.
 
 Codex and Claude Code are the agents/harnesses that reason and use tools; KRn is a deterministic optimization substrate around that workflow.
 
-Aider's RepoMap uses a different architecture: it builds a ranked symbol map and sends selected portions to the model.
+Aider's RepoMap builds a ranked symbol map and sends selected portions to the model. `krn map` follows the same idea (tree-sitter tags, a reference graph ranked with PageRank, a token budget), is computed on demand rather than maintained, and is delivered once, on pi's first prompt.
 
-KRn currently reconstructs repository facts using Git/filesystem tools, uses ripgrep for bounded search, and keeps recoverable evidence plus explicit-input cache records instead of maintaining a universal repository map.
+Otherwise KRn reconstructs repository facts using Git/filesystem tools, uses ripgrep for bounded search, and keeps recoverable evidence plus explicit-input cache records.
 
 * [OpenAI Agents API architecture](https://developers.openai.com/api/docs/guides/agents-api/architecture) distinguishes the harness that runs the model/tool loop from the environment where work executes.
 * [Aider repository map documentation](https://aider.chat/docs/repomap.html) describes its symbol map, dependency-graph ranking, and token-budgeted context selection.

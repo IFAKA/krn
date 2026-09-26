@@ -95,3 +95,22 @@ func mustBuild(t *testing.T, r workspace.Repo, focus string, tokens int) string 
 	}
 	return out
 }
+
+func TestClipHeaderKeepsWordsAndSeparator(t *testing.T) {
+	header := "project: Demo app\nlayout: internal/eval/(5) internal/find/(2) cmd/krn/(2)\n\n"
+	for max := 0; max <= len(header)+1; max++ {
+		got := clipHeader(header, max)
+		if len(got) > max {
+			t.Fatalf("max %d: %d bytes", max, len(got))
+		}
+		if got != "" && !strings.HasSuffix(got, "\n\n") {
+			t.Fatalf("max %d: no separator: %q", max, got)
+		}
+		if got != "" && !strings.HasPrefix(header, strings.TrimSuffix(got, "\n\n")) {
+			t.Fatalf("max %d: not a prefix: %q", max, got)
+		}
+	}
+	if got := clipHeader(header, 40); strings.Contains(got, "internal/eval/(5) i") || strings.Contains(got, "inte\n") {
+		t.Fatalf("cut mid-word: %q", got)
+	}
+}

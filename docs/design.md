@@ -197,7 +197,7 @@ internal/state/       krn state
 internal/exec/        krn exec and the explicit-input cache
 internal/eval/        krn eval (A/B harness), krn eval-suite, krn eval-pi, krn eval-claude
 eval/                 eval task manifests and fixture repository
-integrations/pi/      pi extension (find_code tool, first-turn map, bounded search output)
+integrations/pi/      pi extension (first-turn map)
 internal/integrate/   Codex/Claude Code routing policy, krn integrate, krn uninstall
 internal/doctor/      krn doctor
 internal/testutil/    helpers shared by tests

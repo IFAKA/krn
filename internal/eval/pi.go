@@ -44,8 +44,8 @@ type piTask struct {
 }
 
 type piVariant struct {
-	Name             string
-	Bound, Tool, Map bool
+	Name string
+	Map  bool
 	// Tree is the no-KRn baseline: the first prompt gets a plain `git ls-files`
 	// list cut to the map's byte budget instead of the ranked map.
 	Tree bool
@@ -54,12 +54,7 @@ type piVariant struct {
 var piVariants = map[string]piVariant{
 	"none": {Name: "none"},
 	"T":    {Name: "T", Tree: true},
-	"A":    {Name: "A", Bound: true},
-	"AB":   {Name: "AB", Bound: true, Tool: true},
-	"ABC":  {Name: "ABC", Bound: true, Tool: true, Map: true},
-	"B":    {Name: "B", Tool: true},
 	"C":    {Name: "C", Map: true},
-	"BC":   {Name: "BC", Tool: true, Map: true},
 }
 
 type piResult struct {
@@ -75,7 +70,6 @@ type piResult struct {
 	CachedIn     int64          `json:"cached_input_tokens"`
 	Output       int64          `json:"output_tokens"`
 	ToolCalls    map[string]int `json:"tool_calls"`
-	FindCode     int            `json:"find_code_calls"`
 	KrnCalls     int            `json:"krn_calls,omitempty"`
 	CostUSD      float64        `json:"cost_usd,omitempty"`
 	Final        string         `json:"final_answer"`
@@ -84,7 +78,7 @@ type piResult struct {
 
 func RunPi(args []string) error {
 	f := workspace.FlagSet("eval-pi")
-	sf := addSuiteFlags(f, "none,A,AB,ABC", 3)
+	sf := addSuiteFlags(f, "none,C,T", 3)
 	model := f.String("model", "", "pi model id (provider omlx)")
 	provider := f.String("provider", "omlx", "pi provider")
 	agentDir := f.String("agent-dir", "", "PI_CODING_AGENT_DIR for isolated pi config")
@@ -215,7 +209,7 @@ func (s *suite) run(config map[string]any, run func(repo string, task piTask, va
 				line, _ := json.Marshal(res)
 				_, _ = out.Write(append(line, '\n'))
 				all = append(all, res)
-				fmt.Printf("[%d/%d] %-14s %-6s seed=%d correct=%-5v wall=%5.1fs turns=%2d uncached=%6d find_code=%d\n", n, total, task.ID, v, seed, res.Correct, float64(res.WallMS)/1000, res.Turns, res.UncachedIn, res.FindCode)
+				fmt.Printf("[%d/%d] %-14s %-6s seed=%d correct=%-5v wall=%5.1fs turns=%2d uncached=%6d\n", n, total, task.ID, v, seed, res.Correct, float64(res.WallMS)/1000, res.Turns, res.UncachedIn)
 			}
 		}
 	}
@@ -264,17 +258,14 @@ func runPi(repo string, task piTask, v piVariant, seed int, model, provider, age
 	args := []string{"-p", "--mode", "json", "--no-session", "--no-extensions", "--provider", provider, "--model", model}
 	if v.Tree {
 		args = append(args, "-e", treeExt)
-	} else if v.Bound || v.Tool || v.Map {
+	} else if v.Map {
 		args = append(args, "-e", ext)
-		if v.Tool {
-			tools += ",find_code"
-		}
 	}
 	args = append(args, "--tools", tools, task.Prompt)
 	// cmd.Stdin stays nil (the null device): pi -p waits for EOF on a piped stdin.
 	cmd := exec.Command("pi", args...)
 	cmd.Dir = repo
-	env := append(os.Environ(), "PI_OFFLINE=1", "KRN_BIN="+krnBin, "KRN_PI_BOUND="+flag01(v.Bound), "KRN_PI_TOOL="+flag01(v.Tool), "KRN_PI_MAP="+flag01(v.Map))
+	env := append(os.Environ(), "PI_OFFLINE=1", "KRN_BIN="+krnBin)
 	if agentDir != "" {
 		env = append(env, "PI_CODING_AGENT_DIR="+agentDir)
 	}
@@ -305,13 +296,6 @@ func runPi(repo string, task piTask, v piVariant, seed int, model, provider, age
 	parsePiEvents(stdout.String(), &res)
 	res.Correct, res.GradeDetails = gradePi(repo, task, res.Final, res.GradeDetails)
 	return res
-}
-
-func flag01(b bool) string {
-	if b {
-		return "1"
-	}
-	return "0"
 }
 
 func parsePiEvents(s string, res *piResult) {
@@ -348,9 +332,6 @@ func parsePiEvents(s string, res *piResult) {
 			switch c.Type {
 			case "toolCall":
 				res.ToolCalls[c.Name]++
-				if c.Name == "find_code" {
-					res.FindCode++
-				}
 			case "text":
 				text += c.Text
 			}
@@ -384,7 +365,7 @@ func gradePi(repo string, task piTask, final, prefix string) (bool, string) {
 
 func piReport(all []piResult, variants []string) string {
 	var b strings.Builder
-	b.WriteString("| variant | correct | accuracy | correct/min | median wall s | mean wall s | mean turns | mean uncached in | mean cached in | mean out | find_code/run |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+	b.WriteString("| variant | correct | accuracy | correct/min | median wall s | mean wall s | mean turns | mean uncached in | mean cached in | mean out |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 	for _, v := range variants {
 		var rs []piResult
 		for _, r := range all {
@@ -396,7 +377,7 @@ func piReport(all []piResult, variants []string) string {
 			continue
 		}
 		var correct int
-		var wall, turns, unc, cached, outTok, fc float64
+		var wall, turns, unc, cached, outTok float64
 		walls := make([]float64, 0, len(rs))
 		for _, r := range rs {
 			if r.Correct {
@@ -409,11 +390,10 @@ func piReport(all []piResult, variants []string) string {
 			unc += float64(r.UncachedIn)
 			cached += float64(r.CachedIn)
 			outTok += float64(r.Output)
-			fc += float64(r.FindCode)
 		}
 		sort.Float64s(walls)
 		k := float64(len(rs))
-		fmt.Fprintf(&b, "| %s | %d/%d | %.0f%% | %.2f | %.1f | %.1f | %.1f | %.0f | %.0f | %.0f | %.1f |\n", v, correct, len(rs), 100*float64(correct)/k, float64(correct)/(wall/60), walls[len(walls)/2], wall/k, turns/k, unc/k, cached/k, outTok/k, fc/k)
+		fmt.Fprintf(&b, "| %s | %d/%d | %.0f%% | %.2f | %.1f | %.1f | %.1f | %.0f | %.0f | %.0f |\n", v, correct, len(rs), 100*float64(correct)/k, float64(correct)/(wall/60), walls[len(walls)/2], wall/k, turns/k, unc/k, cached/k, outTok/k)
 	}
 	b.WriteString("\nPer task (correct runs / runs, mean wall s):\n\n| task |")
 	for _, v := range variants {

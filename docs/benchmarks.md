@@ -11,7 +11,7 @@ Full method, every run (including dropped experiments), pooled intervals, and th
 * 9 localization questions ("where is X computed/stored/decided"), 3 each on a JS PWA, a TypeScript app, and this repository at a pinned commit, graded by regexes over the final answer against ground truth checked by reading the code;
 * 3 edit tasks on `eval/fixture`, graded by their verify command.
 
-Variants are parts of the [pi extension](pi.md): A bounds search output, B adds the `find_code` tool, C injects the first-turn map. Within each seed, the variants of a task run back to back in a rotating order, so slow drift on the machine (thermals, cache state) spreads across variants instead of favouring one.
+Variants are parts of the [pi extension](pi.md): A bounds search output, B adds the `find_code` tool, C injects the first-turn map. A and B were later removed from the extension and the harness because they did not help; only `none`, `C` and `T` can be rerun. Within each seed, the variants of a task run back to back in a rotating order, so slow drift on the machine (thermals, cache state) spreads across variants instead of favouring one.
 
 ```text
 manifest (task, repo@commit, answer regexes or verify command)
@@ -53,7 +53,7 @@ Pooled over the three baseline runs (1, 3, 6) and the three map-only runs whose 
 
 What this shows, and does not:
 
-* Of KRn's three parts, the map (C) accounts for the gain: C alone matched A+B+C, so only C is on by default. The model called `find_code` in about one run in ten when it was offered; bounding (A) alone changed nothing.
+* Of KRn's three parts, the map (C) accounts for the gain: C alone matched A+B+C, so only C was kept. The model called `find_code` in about one run in ten when it was offered; bounding (A) alone changed nothing.
 * The localization intervals for none and C do not overlap. Without any map, 40 of 54 localization runs in runs 1 and 3 answered after zero tool calls, and all 40 were wrong (invented files or functions); 13 of the other 14 were correct. A map puts real names in context, so the model searches instead of guessing.
 * Any map does that. The plain file list (T) scored 33/36 to the ranked map's 32/36, within noise. It took more turns, since a list of paths still has to be opened and read, so the ranked map produced about 40% more correct answers per minute (1.50 to 1.07) and used about 40% fewer input tokens. KRn's ranking buys speed on this device, not correctness.
 * Noise is large at this size. The map-only variant scored 31/36 and 29/36 in runs 2 and 3 with nearly identical maps. Run 5 scored 34/36 to run 4's 29/36, although only three tasks' inputs differed between them. Treat any difference of about five correct answers or less as noise.
@@ -81,7 +81,7 @@ A map cannot report the omission of code the question never names, so the featur
 | tree (file list, no KRn) | 33/36 | 92% (78–97%) | 3.92 | 12.3 s | 5.2 | 7,454 | 70,515 | 0.028 | 0 |
 
 * Vanilla Claude Code on Haiku 4.5 solves nearly all of these tasks, so there is no room to show a correctness gain. Unlike the local model, it searched before answering in every run.
-* The policy is what `install.sh` adds for Claude Code today. The model followed it (about two `krn` calls per task), which added turns and about 15% cost without changing correctness.
+* The policy is what `install.sh` added for Claude Code at the time; after this result it became opt-in (`krn integrate claude`). The model followed it (about two `krn` calls per task), which added turns and about 15% cost without changing correctness.
 * The map cut turns by a third and cost by about 30%. Its three misses were all on `wk-rest`: the model read the timer code and stopped before finding `task-factory.js`, which sets the per-exercise rest time. The file-list runs missed the same task the same way, after more searching. With 36 runs, 33 vs 35 is within noise.
 * These tasks are too easy to separate the variants on correctness for this model. Harder tasks and larger models remain unmeasured.
 

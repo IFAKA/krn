@@ -22,7 +22,7 @@ It depends on the agent and the model. Measured on 12 tasks (9 "where is X imple
 |---|---:|---:|---|
 | **pi + local 30B model** (M4 Pro) | 42% correct | **85% correct**, about 1.6× the correct answers per minute | Worth using. The small model guesses without looking; the map makes it search. |
 | same, a plain `git ls-files` list instead of KRn (one run) | | 92% correct, about 1.1× per minute | Any file list stops the guessing. KRn's ranking reaches the same accuracy about 40% faster. |
-| **Claude Code + Haiku 4.5** | 97% correct | 100% with the routing policy, at about 15% more cost | No measurable gain. These tasks are too easy for this model. |
+| **Claude Code + Haiku 4.5** | 97% correct | 100% with the routing policy, at about 15% more cost | No measurable gain. These tasks are too easy for this model, so the policy is opt-in. |
 | Claude Code with Sonnet or Opus, Codex, real bug fixes | | | Not measured yet. |
 
 At this sample size, differences of up to about 5 correct answers out of 36 are noise. Every run is in [docs/benchmarks.md](docs/benchmarks.md), including experiments that failed and were dropped, and the raw data is in [eval/results/](eval/results/). The harness is included, so you can run it on your own tasks.
@@ -41,8 +41,9 @@ The installer:
 
 * builds `krn` into `~/.local/bin` (add it to `PATH` if needed);
 * installs [ast-grep](https://ast-grep.github.io/) if it is missing, for `krn code`;
-* **pi:** copies the extension to `~/.pi/agent/extensions/krn/`, which adds the map to the first prompt of each session;
-* **Claude Code and Codex:** adds a short, marked routing block to `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` that tells the agent when to call `krn`.
+* **pi:** copies the extension to `~/.pi/agent/extensions/krn/`, which adds the map to the first prompt of each session.
+
+It does not touch Claude Code or Codex. For them, `krn` is a set of commands the agent can call, and there is an opt-in routing policy that tells the agent when to call them: `krn integrate claude` or `krn integrate codex` adds a short, marked block to `~/.claude/CLAUDE.md` or `~/.codex/AGENTS.md`. It is opt-in because on Claude Code with Haiku 4.5 it added about 15% cost without a measured gain; Codex hasn't been measured.
 
 After that, use your agent as usual inside any Git repository; there is no per-project setup. `krn uninstall` removes everything the installer added. Details are in [docs/commands.md](docs/commands.md#installation-and-integration).
 
@@ -102,14 +103,15 @@ Most commands take `--json`. Full flags and semantics are in [docs/commands.md](
 * **Small output, full evidence on disk.** What the agent sees is bounded; the full output goes to `.git/krn/runs/`.
 * **Fail open.** Outside Git, or on a parse error or a stale or tampered cache record, KRn steps aside instead of guessing.
 * **Don't store what can be rebuilt.** Git and the files are the source of truth. KRn stores only task facts that can't be reconstructed, plus cache records that are checked before every reuse.
-* **Measure before shipping.** A feature stays only if it raises correct answers per minute in the benchmark. That is why the pi extension enables only the map. Bounded search output and a `find_code` tool are available but switched off, because neither helped.
+* **Measure before shipping.** A feature stays only if it raises correct answers per minute in the benchmark. That is why the pi extension contains only the map: bounded search output and a `find_code` tool were removed because neither helped, and the Claude Code and Codex routing policy is opt-in. The standalone commands (`find`, `code`, `verify`, `exec`, `state`) are tested for correctness but not yet shown to help an agent; see [Limits](#limits).
 
 It deliberately has no daemon, embeddings, vector database, MCP server, cloud service, or telemetry. The reasoning is in [docs/design.md](docs/design.md).
 
 ## Limits
 
 * The benchmark is small: 12 tasks, one local model and one Claude model. Two of the three task repositories are private.
-* On Claude Code with Haiku, the routing policy added cost without a measured gain. Whether it helps larger models or harder tasks is unknown.
+* On Claude Code with Haiku, the routing policy added cost without a measured gain, so `install.sh` no longer adds it. Whether it helps larger models or harder tasks is unknown.
+* Only the pi map has been measured on its own. The benchmark tasks are short lookups and small edits, which never need `code`, `verify`, `exec --cache` or `state`, so their effect on an agent is unmeasured.
 * The map shows where functions start, not which line inside them does the work, so agents can still cite the wrong line.
 * `exec --cache` is only as safe as the inputs you declare. KRn checks that they haven't changed, but it can't know about inputs you left out.
 

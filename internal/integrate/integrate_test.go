@@ -110,17 +110,9 @@ func TestCodexIntegrationInstallsOperationalRoutingPolicy(t *testing.T) {
 	}
 }
 
-func TestInstallScriptAndDirectIntegrationUseTheSamePolicy(t *testing.T) {
-	directHome := t.TempDir()
-	t.Setenv("CODEX_HOME", directHome)
-	if err := Run([]string{"codex"}); err != nil {
-		t.Fatal(err)
-	}
-	direct, err := os.ReadFile(filepath.Join(directHome, "AGENTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-
+// The routing policy showed no measured gain on Claude Code, so it is opt-in:
+// install.sh installs the pi extension and leaves AGENTS.md and CLAUDE.md alone.
+func TestInstallScriptInstallsPiExtensionAndNoPolicy(t *testing.T) {
 	installHome := t.TempDir()
 	installCodexHome := t.TempDir()
 	localBin := filepath.Join(installHome, ".local", "bin")
@@ -147,12 +139,10 @@ func TestInstallScriptAndDirectIntegrationUseTheSamePolicy(t *testing.T) {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("install.sh failed: %v\n%s", err, output)
 	}
-	installed, err := os.ReadFile(filepath.Join(installCodexHome, "AGENTS.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(installed) != string(direct) {
-		t.Fatalf("install.sh and direct integration installed different policy:\ndirect=%q\nscript=%q", direct, installed)
+	for _, p := range []string{filepath.Join(installCodexHome, "AGENTS.md"), filepath.Join(installHome, ".claude", "CLAUDE.md")} {
+		if _, err := os.Stat(p); !os.IsNotExist(err) {
+			t.Fatalf("install.sh wrote %s; the routing policy is opt-in (err=%v)", p, err)
+		}
 	}
 	ext, err := os.ReadFile(filepath.Join(piDir, "extensions", "krn", "index.ts"))
 	if err != nil || !strings.Contains(string(ext), piExtensionMarker) {

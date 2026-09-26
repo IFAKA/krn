@@ -4,17 +4,19 @@
 
 KRn is a research-informed deterministic optimization substrate for coding agents such as Codex, Claude Code, and pi. It reconstructs repository facts, bounds retrieved evidence, verifies work, records irreducible state and execution evidence, and safely reuses deterministic computation when explicit dependencies establish that reuse remains valid.
 
-Codex or Claude Code remains the agent. KRn is the layer beneath and around it:
+The agent (Codex, Claude Code, or pi) stays in charge. KRn is the layer beneath and around it:
 
 ```text
-     model
-       ↓
-Codex / Claude Code   agent / harness
-       ↓
-      KRn              deterministic optimization substrate
-       ↓
+          model
+            ↓
+Codex / Claude Code / pi      agent / harness
+            ↓
+           KRn                deterministic optimization substrate
+            ↓
 repository + existing tools
 ```
+
+Measured so far, on one local model and one machine: a first-turn repository map raised pi's localization accuracy from 24% to 80% (13/54 → 43/54, pooled over two runs each) and correct answers per minute from about 1.0 to 1.55. Features that did not beat it were left off or dropped, and those runs are published too. See [Benchmarks](#benchmarks) for the method, noise, and limits. The agent-level effect on Codex and Claude Code has not been measured.
 
 The engineering thesis is:
 
@@ -54,32 +56,67 @@ Two kinds of measurement exist. Neither covers Codex or Claude Code end to end: 
 * 9 localization questions ("where is X computed/stored/decided"), 3 each on a JS PWA, a TypeScript app, and this repository at a pinned commit, graded by regexes over the final answer against ground truth checked by reading the code;
 * 3 edit tasks on `eval/fixture`, graded by their verify command.
 
-Variants are parts of the [pi extension](#local-models-with-pi): A bounds search output, B adds the `find_code` tool, C injects the first-turn map.
+Variants are parts of the [pi extension](#local-models-with-pi): A bounds search output, B adds the `find_code` tool, C injects the first-turn map. Within each seed, the variants of a task run back to back in a rotating order, so slow drift on the machine (thermals, cache state) spreads across variants instead of favouring one.
 
-| variant | correct | correct/min | median wall | mean wall | mean turns | mean uncached input tok | mean output tok |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| none | 16/36 (44%) | 0.97 | 14.7 s | 27.4 s | 7.4 | 6,115 | 1,036 |
-| A | 16/36 (44%) | 0.87 | 17.2 s | 30.7 s | 8.8 | 6,579 | 1,179 |
-| A+B | 22/36 (61%) | 1.11 | 21.6 s | 33.0 s | 9.8 | 7,420 | 1,193 |
-| A+B+C | 29/36 (81%) | 1.64 | 23.7 s | 29.5 s | 7.9 | 6,968 | 1,069 |
-| C ² | 31/36 (86%) | 1.61 | 28.7 s | 32.0 s | 7.7 | 8,042 | 1,094 |
-| B+C ² | 30/36 (83%) | 1.41 | 27.7 s | 35.5 s | 7.6 | 7,893 | 1,117 |
-| none ³ | 15/36 (42%) | 1.00 | 16.3 s | 25.0 s | 6.3 | 6,340 | 856 |
-| C ³ | 29/36 (81%) | 1.50 | 27.6 s | 32.3 s | 7.1 | 7,397 | 981 |
+```text
+manifest (task, repo@commit, answer regexes or verify command)
+   |
+   v
+for each seed, task, variant ──> fresh detached clone ──> pi -p --mode json [-e krn.ts]
+                                                              |
+                                  results.jsonl <── grade final answer (regexes) or run verify
+                                        |
+                                        v
+                          report.md: correct, correct/min, wall, turns, tokens, per task
+```
 
-² Second run, same tasks and seeds, about 40 minutes later.
-³ Third run, after the map started ranking a definition named by the prompt above the code it calls. The maps for the benchmark prompts barely changed, so this run mainly measures noise: C moved by two answers, the baseline by one.
+| run | variant | correct | correct/min | median wall | mean wall | mean turns | mean uncached input tok | mean output tok |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| 1 | none | 16/36 (44%) | 0.97 | 14.7 s | 27.4 s | 7.4 | 6,115 | 1,036 |
+| 1 | A | 16/36 (44%) | 0.87 | 17.2 s | 30.7 s | 8.8 | 6,579 | 1,179 |
+| 1 | A+B | 22/36 (61%) | 1.11 | 21.6 s | 33.0 s | 9.8 | 7,420 | 1,193 |
+| 1 | A+B+C | 29/36 (81%) | 1.64 | 23.7 s | 29.5 s | 7.9 | 6,968 | 1,069 |
+| 2 | C | 31/36 (86%) | 1.61 | 28.7 s | 32.0 s | 7.7 | 8,042 | 1,094 |
+| 2 | B+C | 30/36 (83%) | 1.41 | 27.7 s | 35.5 s | 7.6 | 7,893 | 1,117 |
+| 3 | none | 15/36 (42%) | 1.00 | 16.3 s | 25.0 s | 6.3 | 6,340 | 856 |
+| 3 | C | 29/36 (81%) | 1.50 | 27.6 s | 32.3 s | 7.1 | 7,397 | 981 |
+| 4 ✗ | C + coverage note | 29/36 (81%) | 0.99 | 31.9 s | 48.6 s | 10.1 | 8,808 | 1,381 |
+| 5 ✗ | C + gated coverage note | 34/36 (94%) | 1.63 | 29.9 s | 34.7 s | 9.1 | 8,485 | 1,161 |
+
+Run 1 is the ablation. Run 2 repeated it about 40 minutes later with C alone and B+C. Run 3 came after the map began ranking a definition named by the prompt above the code it calls; the benchmark prompts' maps barely changed, so it mostly measures noise. Runs 4 and 5 (✗) tested a line that lists question words the map does not show; neither shipped (see below).
+
+Pooled over the two baseline runs and the two map-only runs whose code is on `main` (runs 2 and 3), with 95% Wilson intervals:
+
+| | all tasks | localization only | correct/min |
+|---|---:|---:|---:|
+| none | 31/72 (43%, 32–55%) | 13/54 (24%, 15–37%) | 0.99 |
+| C (map) | 60/72 (83%, 73–90%) | 43/54 (80%, 67–88%) | 1.55 |
 
 What this shows, and does not:
 
 * The map (C) accounts for the gain: C alone matched A+B+C, so only C is on by default. The model called `find_code` in about one run in ten when it was offered; bounding (A) alone changed nothing.
-* Without KRn, 20 of the 27 localization runs answered after zero tool calls and all 20 were wrong (invented files or functions); all 7 runs that used a tool were correct. The map puts evidence in context without the model having to decide to search.
-* Most remaining map-variant failures are fast answers taken from the map alone when the map left out the right file (for example a descriptive question about sync conflicts whose answer is `mergeChanges`). The map does not say what it omitted, and the model does not search further.
+* The localization intervals do not overlap. Without KRn, 40 of the 54 localization runs answered after zero tool calls, and all 40 were wrong (invented files or functions); 13 of the other 14 were correct. The map puts evidence in context without the model having to decide to search.
+* Noise is large at this size. The map-only variant scored 31/36 and 29/36 in runs 2 and 3 with nearly identical maps. Run 5 scored 34/36 to run 4's 29/36, although only three tasks' inputs differed between them. Treat any difference of about five correct answers or less as noise.
 * The three edit tasks were solved in nearly every variant; the difference is in localization.
-* The median run is slower with the map (more correct answers take more turns reading code), but correct answers per minute rise from 0.97 to about 1.6.
-* One model, one machine, 36 runs per variant. A gap of three or four correct answers is within seed noise. Two of the three source repositories are private, so the exact manifest is not reproducible elsewhere; the harness is.
+* The median run is slower with the map (more correct answers take more turns reading code), but correct answers per minute rise from about 1.0 to about 1.55.
+* One model, one machine, 36 runs per variant per run. Two of the three source repositories are private, so the exact manifest is not reproducible elsewhere; the harness is.
 
-Raw results and per-task tables: [`eval/results/2026-09-26-pi-local/`](eval/results/2026-09-26-pi-local/) and [`eval/results/2026-09-26-pi-local-rank/`](eval/results/2026-09-26-pi-local-rank/). Reproduce with your own manifest:
+Negative result: the coverage note. Most remaining map failures are fast answers taken from the map when it left out the right file. For example, the answer to a question about sync conflicts is `mergeChanges`, but the question never names it. Runs 4 and 5 tested one fix: a last map line naming the question's rarer words that the map did not show, telling the model to search.
+
+* Run 4 always showed the line. Correct stayed at 29/36, but mean wall time rose from 32 s to 49 s, and correct/min fell from 1.50 to 0.99.
+* Run 5 showed the line only when most of those words were missing. It scored 34/36, but the line changed on only three tasks, and tasks with byte-identical inputs swung as much as the gain.
+* Both versions listed prompt filler ("Answer", "chat") as missing words. Keeping only words that name definitions in the repository removed the filler. After that, the line appeared on one of nine questions, and still did not point at `mergeChanges`.
+
+A map cannot report the omission of code the question never names, so the feature was dropped.
+
+Raw results and per-task tables:
+
+* runs 1–2: [`eval/results/2026-09-26-pi-local/`](eval/results/2026-09-26-pi-local/)
+* run 3: [`eval/results/2026-09-26-pi-local-rank/`](eval/results/2026-09-26-pi-local-rank/)
+* run 4: [`eval/results/2026-09-26-pi-local-coverage/`](eval/results/2026-09-26-pi-local-coverage/)
+* run 5: [`eval/results/2026-09-26-pi-local-coverage-gate/`](eval/results/2026-09-26-pi-local-coverage-gate/)
+
+Every run is listed there, including those that did not ship. Reproduce with your own manifest:
 
 ```sh
 krn eval-pi --model MODEL --manifest eval/pi-local-manifest.json --variants none,A,AB,ABC --seeds 3
@@ -282,6 +319,21 @@ The verifier is run after Codex exits in each fresh checkout. A run is verified 
 
 `integrations/pi/krn.ts` is a [pi](https://github.com/earendil-works/pi) extension. `install.sh` copies it to `~/.pi/agent/extensions/krn/index.ts` when pi is detected; `krn uninstall` removes it. It has three parts. Only the map is on by default; set a variable to `1` to enable a part or `0` to disable it:
 
+```text
+first prompt in a Git repo (and no file path in it)
+   |
+   v
+krn map --focus PROMPT --tokens 800
+   |  source files ── tree-sitter ──> definitions + references  (tags cached by blob hash)
+   |  references between files ────> graph ── personalized PageRank toward prompt terms, dirty files
+   |  header (README / manifest, layout) + top signatures, cut to the budget
+   v
+appended as a message after the system prompt  ──>  model answers or reads/greps further
+(system prompt untouched: the KV prefix cache stays valid across turns)
+
+optional: find_code tool (B) ── krn find       bash search output > 6000 bytes (A) ── 40 lines + saved log
+```
+
 * `KRN_PI_MAP` (C, default on): on the first prompt of a session, appends `krn map --focus PROMPT` as a message. It never edits the system prompt, so the KV prefix cache stays valid. It is skipped when the prompt already names a file path.
 * `KRN_PI_TOOL` (B, default off): registers a `find_code` tool backed by `krn find`.
 * `KRN_PI_BOUND` (A, default off): output from grep/find/ls or search commands run in bash, over 6000 bytes, is cut to 40 lines; the full text is saved under `.git/krn/runs/`. An empty search gets `krn find` hits for the same words appended.
@@ -290,7 +342,7 @@ Every part fails open outside a Git repository or when `krn` errors. Further var
 
 `krn eval-pi` runs pi non-interactively (`pi -p --mode json --no-session --no-extensions`, plus `-e` with the extension for KRn variants) on fresh detached clones, once per variant, task, and seed. It grades the final answer against regexes and optional verify commands, and writes `results.jsonl` and `report.md`.
 
-Measured results are in [Benchmarks](#benchmarks). The map alone matched all three parts there, so it is the only default. One task failed under every map variant: asked where a rest timer's end time is computed, the model cited the first line of `startRest` instead of the assignment three lines below it, and the default constant instead of the per-exercise value. Signatures show where a function starts, not which line inside it does the work; this is a known weakness in precise line citation.
+Measured results are in [Benchmarks](#benchmarks). The map alone matched all three parts there, so it is the only default. The hardest task was solved in only 4 of 18 map runs: asked where a rest timer's end time is computed, the model usually cited the first line of `startRest` instead of the assignment three lines below it, and the default constant instead of the per-exercise value. Signatures show where a function starts, not which line inside it does the work; this is a known weakness in precise line citation.
 
 To use it interactively, pi's `models.json` needs the served model and `settings.json` needs it as `defaultModel` (the eval passes `--provider`/`--model` and an isolated `PI_CODING_AGENT_DIR` instead). With `"reasoning": false` and a `contextWindow` no larger than the server's limit, `pi` in any Git repository gets the map on its first prompt. When scripting `pi -p`, redirect stdin (`pi -p '...' </dev/null`): pi reads piped stdin as extra prompt input and waits for it to close. `krn eval-pi` runs pi with stdin on the null device.
 
@@ -406,7 +458,7 @@ tampered/mismatched record   → cache miss
 
 This establishes command-execution reuse under the declared dependency model.
 
-It does not establish model-level efficiency. The one agent-level measurement is the pi evaluation in [Benchmarks](#benchmarks): one local model on one machine, where the first-turn map raised localization correctness and correct answers per minute.
+It does not establish model-level efficiency. The one agent-level measurement is the pi evaluation in [Benchmarks](#benchmarks): one local model on one machine, where the first-turn map raised localization correctness (24% → 80%, pooled 95% intervals 15–37% and 67–88%) and correct answers per minute (about 1.0 → 1.55).
 
 ### KRn-specific hypotheses
 

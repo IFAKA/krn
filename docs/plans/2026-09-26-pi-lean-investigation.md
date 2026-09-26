@@ -1,7 +1,7 @@
 # Investigation log: KRn for pi on a local model, and Claude Code baselines (2026-09-26)
 
 This is the lab notebook for the work that produced `krn find`, `krn map`, the pi extension, `krn eval-pi`, and
-`krn eval-claude`. The README holds the current results; this file keeps the reasoning, the dead ends, and the
+`krn eval-claude`. The README and `docs/benchmarks.md` hold the current results; this file keeps the reasoning, the dead ends, and the
 open questions so they are not lost with the chat history. Raw data for every run is in `eval/results/2026-09-26-*`.
 
 ## Starting point

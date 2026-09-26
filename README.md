@@ -16,7 +16,7 @@ Codex / Claude Code / pi      agent / harness
 repository + existing tools
 ```
 
-Measured so far (method, noise, and limits in [Benchmarks](#benchmarks)):
+Measured so far (method, noise, and limits in [Benchmarks](docs/benchmarks.md)):
 
 * **pi with a local 30B model:** a repository map on the first prompt raised correct answers from 42% to 85% (pooled over three runs). A plain `git ls-files` list did as well on correctness; KRn's ranked map reached it about 40% faster.
 * **Claude Code with Haiku 4.5:** vanilla Claude Code already answered 35 of 36 tasks. The KRn routing policy that `install.sh` adds made no measurable difference to correctness and cost about 15% more per task.
@@ -49,7 +49,7 @@ cd any-git-project
 codex    # or: claude, or: pi
 ```
 
-There is no `krn init`. The integration is global: an instruction block per agent for Codex and Claude Code (`krn integrate codex|claude`), and an extension for pi (copied by `install.sh`). The commands operate on the Git repository containing the current directory. pi's model and provider configuration is pi's own and outside KRn; see [Local models with pi](#local-models-with-pi).
+There is no `krn init`. The integration is global: an instruction block per agent for Codex and Claude Code (`krn integrate codex|claude`), and an extension for pi (copied by `install.sh`). The commands operate on the Git repository containing the current directory. pi's model and provider configuration is pi's own and outside KRn; see [Local models with pi](docs/pi.md).
 
 ## Benchmarks
 
@@ -63,126 +63,9 @@ There is no `krn init`. The integration is global: an instruction block per agen
 | bug fixes and features | 3 small edit tasks, solved in nearly every variant | | | unknown |
 | `krn exec --cache` | correct reuse and invalidation (`benchmark.sh`) | | time saved not measured | mechanism only |
 
-Differences of about five correct answers or fewer out of 36 are noise at this size (see below). Other tools (Aider's repo map, LSP or MCP code-navigation servers) were not run; the plain file list stands in for "any map". Two of the three task repositories are private, so the numbers cannot be reproduced exactly elsewhere; the harness can.
+Differences of about five correct answers or fewer out of 36 are noise at this size (see [docs/benchmarks.md](docs/benchmarks.md)). Other tools (Aider's repo map, LSP or MCP code-navigation servers) were not run; the plain file list stands in for "any map". Two of the three task repositories are private, so the numbers cannot be reproduced exactly elsewhere; the harness can.
 
-### Local model with pi: correctness per minute
-
-`krn eval-pi`, 2026-09-26, M4 Pro (48 GB), NVIDIA-Nemotron-3.5-Lightning-30B-A3B-oQ4 served by oMLX (thinking off), pi 0.85.1. 12 tasks × 3 seeds = 36 runs per variant, each on a fresh detached clone:
-
-* 9 localization questions ("where is X computed/stored/decided"), 3 each on a JS PWA, a TypeScript app, and this repository at a pinned commit, graded by regexes over the final answer against ground truth checked by reading the code;
-* 3 edit tasks on `eval/fixture`, graded by their verify command.
-
-Variants are parts of the [pi extension](#local-models-with-pi): A bounds search output, B adds the `find_code` tool, C injects the first-turn map. Within each seed, the variants of a task run back to back in a rotating order, so slow drift on the machine (thermals, cache state) spreads across variants instead of favouring one.
-
-```text
-manifest (task, repo@commit, answer regexes or verify command)
-   |
-   v
-for each seed, task, variant ──> fresh detached clone ──> pi -p --mode json [-e krn.ts]
-                                                              |
-                                  results.jsonl <── grade final answer (regexes) or run verify
-                                        |
-                                        v
-                          report.md: correct, correct/min, wall, turns, tokens, per task
-```
-
-| run | variant | correct | correct/min | median wall | mean wall | mean turns | mean uncached input tok | mean output tok |
-|---|---|---:|---:|---:|---:|---:|---:|---:|
-| 1 | none | 16/36 (44%) | 0.97 | 14.7 s | 27.4 s | 7.4 | 6,115 | 1,036 |
-| 1 | A | 16/36 (44%) | 0.87 | 17.2 s | 30.7 s | 8.8 | 6,579 | 1,179 |
-| 1 | A+B | 22/36 (61%) | 1.11 | 21.6 s | 33.0 s | 9.8 | 7,420 | 1,193 |
-| 1 | A+B+C | 29/36 (81%) | 1.64 | 23.7 s | 29.5 s | 7.9 | 6,968 | 1,069 |
-| 2 | C | 31/36 (86%) | 1.61 | 28.7 s | 32.0 s | 7.7 | 8,042 | 1,094 |
-| 2 | B+C | 30/36 (83%) | 1.41 | 27.7 s | 35.5 s | 7.6 | 7,893 | 1,117 |
-| 3 | none | 15/36 (42%) | 1.00 | 16.3 s | 25.0 s | 6.3 | 6,340 | 856 |
-| 3 | C | 29/36 (81%) | 1.50 | 27.6 s | 32.3 s | 7.1 | 7,397 | 981 |
-| 4 ✗ | C + coverage note | 29/36 (81%) | 0.99 | 31.9 s | 48.6 s | 10.1 | 8,808 | 1,381 |
-| 5 ✗ | C + gated coverage note | 34/36 (94%) | 1.63 | 29.9 s | 34.7 s | 9.1 | 8,485 | 1,161 |
-| 6 | none | 14/36 (39%) | 0.94 | 17.7 s | 24.7 s | 6.4 | 5,546 | 881 |
-| 6 | C | 32/36 (89%) | 1.50 | 28.1 s | 35.7 s | 8.6 | 8,375 | 1,220 |
-| 6 | T (file list, no KRn) | 33/36 (92%) | 1.07 | 45.8 s | 51.2 s | 13.5 | 10,838 | 1,643 |
-
-Run 1 is the ablation. Run 2 repeated it about 40 minutes later with C alone and B+C. Run 3 came after the map began ranking a definition named by the prompt above the code it calls; the benchmark prompts' maps barely changed, so it mostly measures noise. Runs 4 and 5 (✗) tested a line that lists question words the map does not show; neither shipped (see below). Run 6 added a baseline without KRn, T: the first prompt gets `git ls-files` cut to the map's byte budget, delivered the same way ([`eval/baselines/pi-tree.ts`](eval/baselines/pi-tree.ts)).
-
-Pooled over the three baseline runs (1, 3, 6) and the three map-only runs whose code is on `main` (2, 3, 6), with 95% Wilson intervals:
-
-| | all tasks | localization only | correct/min |
-|---|---:|---:|---:|
-| none | 45/108 (42%, 33–51%) | 18/81 (22%, 15–32%) | 0.97 |
-| C (map) | 92/108 (85%, 77–91%) | 66/81 (81%, 72–88%) | 1.53 |
-| T (file list), run 6 only | 33/36 (92%, 78–97%) | 24/27 (89%, 72–96%) | 1.07 |
-
-What this shows, and does not:
-
-* Of KRn's three parts, the map (C) accounts for the gain: C alone matched A+B+C, so only C is on by default. The model called `find_code` in about one run in ten when it was offered; bounding (A) alone changed nothing.
-* The localization intervals for none and C do not overlap. Without any map, 40 of 54 localization runs in runs 1 and 3 answered after zero tool calls, and all 40 were wrong (invented files or functions); 13 of the other 14 were correct. A map puts real names in context, so the model searches instead of guessing.
-* Any map does that. The plain file list (T) scored 33/36 to the ranked map's 32/36, within noise. It took more turns, since a list of paths still has to be opened and read, so the ranked map produced about 40% more correct answers per minute (1.50 to 1.07) and used about 40% fewer input tokens. KRn's ranking buys speed on this device, not correctness.
-* Noise is large at this size. The map-only variant scored 31/36 and 29/36 in runs 2 and 3 with nearly identical maps. Run 5 scored 34/36 to run 4's 29/36, although only three tasks' inputs differed between them. Treat any difference of about five correct answers or less as noise.
-* The three edit tasks were solved in nearly every variant; the difference is in localization.
-* The median run is slower with the map (more correct answers take more turns reading code), but correct answers per minute rise from about 1.0 to about 1.55.
-* One model, one machine, 36 runs per variant per run. Two of the three source repositories are private, so the exact manifest is not reproducible elsewhere; the harness is.
-
-Negative result: the coverage note. Most remaining map failures are fast answers taken from the map when it left out the right file. For example, the answer to a question about sync conflicts is `mergeChanges`, but the question never names it. Runs 4 and 5 tested one fix: a last map line naming the question's rarer words that the map did not show, telling the model to search.
-
-* Run 4 always showed the line. Correct stayed at 29/36, but mean wall time rose from 32 s to 49 s, and correct/min fell from 1.50 to 0.99.
-* Run 5 showed the line only when most of those words were missing. It scored 34/36, but the line changed on only three tasks, and tasks with byte-identical inputs swung as much as the gain.
-* Both versions listed prompt filler ("Answer", "chat") as missing words. Keeping only words that name definitions in the repository removed the filler. After that, the line appeared on one of nine questions, and still did not point at `mergeChanges`.
-
-A map cannot report the omission of code the question never names, so the feature was dropped.
-
-### Claude Code with Haiku 4.5
-
-`krn eval-claude`, same 12 tasks, 3 seeds, Claude Code 2.1.283 with `claude-haiku-4-5-20251001`. Every run uses `claude -p --safe-mode`, so the user's CLAUDE.md, hooks, plugins, and MCP servers are not loaded; each variant adds only its own text to the system prompt. It ran alongside run 6.
-
-| variant | correct | accuracy (95% CI) | correct/min | median wall | mean turns | mean uncached input tok | mean cached input tok | $ per task (list price) | krn calls per task |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| none | 35/36 | 97% (86–100%) | 3.56 | 15.3 s | 5.8 | 7,759 | 88,070 | 0.032 | 0 |
-| policy (installed KRn routing policy) | 36/36 | 100% (90–100%) | 3.36 | 16.4 s | 6.0 | 9,540 | 113,602 | 0.037 | 2.0 |
-| map (`krn map`, first prompt) | 33/36 | 92% (78–97%) | 4.52 | 11.2 s | 3.7 | 6,406 | 49,362 | 0.023 | 0 |
-| tree (file list, no KRn) | 33/36 | 92% (78–97%) | 3.92 | 12.3 s | 5.2 | 7,454 | 70,515 | 0.028 | 0 |
-
-* Vanilla Claude Code on Haiku 4.5 solves nearly all of these tasks, so there is no room to show a correctness gain. Unlike the local model, it searched before answering in every run.
-* The policy is what `install.sh` adds for Claude Code today. The model followed it (about two `krn` calls per task), which added turns and about 15% cost without changing correctness.
-* The map cut turns by a third and cost by about 30%. Its three misses were all on `wk-rest`: the model read the timer code and stopped before finding `task-factory.js`, which sets the per-exercise rest time. The file-list runs missed the same task the same way, after more searching. With 36 runs, 33 vs 35 is within noise.
-* These tasks are too easy to separate the variants on correctness for this model. Harder tasks and larger models remain unmeasured.
-
-Raw results and per-task tables:
-
-* runs 1–2: [`eval/results/2026-09-26-pi-local/`](eval/results/2026-09-26-pi-local/)
-* run 3: [`eval/results/2026-09-26-pi-local-rank/`](eval/results/2026-09-26-pi-local-rank/)
-* run 4: [`eval/results/2026-09-26-pi-local-coverage/`](eval/results/2026-09-26-pi-local-coverage/)
-* run 5: [`eval/results/2026-09-26-pi-local-coverage-gate/`](eval/results/2026-09-26-pi-local-coverage-gate/)
-* run 6 (file-list baseline): [`eval/results/2026-09-26-baselines-pi/`](eval/results/2026-09-26-baselines-pi/)
-* Claude Code: [`eval/results/2026-09-26-baselines-claude/`](eval/results/2026-09-26-baselines-claude/)
-
-Every run is listed there, including those that did not ship. The reasoning behind each decision, the dropped designs, and open questions are in [`docs/plans/2026-09-26-pi-lean-investigation.md`](docs/plans/2026-09-26-pi-lean-investigation.md). Reproduce with your own manifest:
-
-```sh
-krn eval-pi --model MODEL --manifest eval/pi-local-manifest.json --variants none,C,T --seeds 3
-krn eval-claude --model claude-haiku-4-5-20251001 --manifest eval/pi-local-manifest.json --seeds 3
-```
-
-### Deterministic execution cache
-
-`benchmark.sh` builds KRn, runs `krn exec --cache` in a scratch repository, and checks each case by counting real executions. Output on 2026-09-26:
-
-| case | executions | cumulative cache hits | result |
-|---|---:|---:|---|
-| unchanged dependency | 1 | 1 | PASS |
-| changed declared dependency | 2 | 1 | PASS |
-| unrelated file | 2 | 2 | PASS |
-| failed execution | 2 | 2 | PASS |
-| invalid applicability (different input) | 3 | 5 | PASS |
-| malformed/stale cache | 4 | 2 | PASS |
-| baseline repeated execution | 2 | 0 | PASS |
-| KRn cache hits | 2 | 2 | PASS |
-| unchanged workload saved executions | 1 | 1 | PASS |
-
-This proves command reuse under the declared-dependency model (see [Current limitation](#current-limitation)), not model-level savings.
-
-```sh
-./benchmark.sh
-```
+Full method, per-run tables, the dropped experiments, and the cache benchmark: [docs/benchmarks.md](docs/benchmarks.md).
 
 ## Why KRn?
 
@@ -255,30 +138,6 @@ The main path is conservative: KRn reconstructs what it can, gathers bounded evi
 
 The implementation fails open around uncertain reconstruction or reuse: unavailable, malformed, stale, tampered, or mismatched evidence is rejected rather than treated as valid.
 
-## Memory model
-
-Agent context is working memory, not KRn's persistent memory.
-
-```text
-agent context             = expensive working memory
-repository + Git          = reconstructable source-of-truth memory
-.git/krn/state.json       = irreducible semantic/task memory
-.git/krn/cache/           = reusable deterministic computation
-.git/krn/runs/            = recoverable command/search/verification evidence
-.git/krn/metrics.jsonl    = local execution measurements
-AGENTS.md / CLAUDE.md     = policy/instructions, not project memory
-```
-
-The governing rule is:
-
-**If KRn can cheaply reconstruct something from an authoritative source, it should not remember a duplicate.**
-
-State contains only fields such as objective, constraints, proven facts, open questions, and negative results.
-
-Cache records contain the information required to conservatively determine whether a previously executed deterministic computation remains reusable.
-
-KRn does not infer undeclared dependencies. Cache safety therefore depends on callers declaring the complete inputs that determine whether a command can be reused.
-
 ## Commands
 
 ```text
@@ -303,274 +162,7 @@ krn uninstall
 krn version
 ```
 
-The Codex and Claude Code integrations are instruction-based and install the same routing policy, addressed to each agent: a managed block in the Codex `AGENTS.md` or the Claude Code `CLAUDE.md`. The agent makes a routing decision before its first shell or file-reading tool call. When a task requires learning the repository before answering or editing, the first operation is `krn context --json`; this includes repository-orientation questions such as what the project is, how it is structured, and where behavior is implemented. If more evidence is needed, the agent prefers `krn find QUERY --json --max-files N` before broad traversal or repeated search. `verify`, `exec`, and `state` retain their narrower roles described above.
-
-The orientation rule remains bypassable for trivial answers, exact known-file/content requests, explicit user-requested shell commands, one clearly sufficient cheap direct operation, or unavailable KRn. The integration does not install prompt hooks, mutate agent state databases or settings, force KRn on every task, or claim that KRn reduces model tokens, reasoning, or wall time without measurements. Re-running integration replaces all well-formed KRn-managed blocks with the current policy and leaves unrelated `AGENTS.md`/`CLAUDE.md` content in place.
-
-`--cache` requires at least one `--input`.
-
-The cache key includes the exact argv, repository root, cache schema, canonicalized dependencies, and content fingerprints of every declared input.
-
-A changed declared input, command, repository root, malformed record, stale schema, tampered result, or provenance mismatch produces a cache miss.
-
-Unknown side effects are never inferred safe. Callers must declare the complete inputs that make a command reusable.
-
-`--verified` is an external assertion recorded with an execution. It is not proof of command purity or complete dependency coverage.
-
-### Structural code edits
-
-`krn code` is a language-independent mechanical interface backed by the externally maintained `ast-grep` CLI. The installer provisions ast-grep into the user-local environment when it is missing. If KRn is installed another way, install ast-grep separately and put it on `PATH`. Patterns are structural ast-grep patterns, and language is inferred from the file extension unless `--lang` is supplied:
-
-```sh
-krn code read --file src/user.ts --pattern 'function CreateUser() { $$$BODY }'
-krn code replace --file src/user.ts --pattern 'function CreateUser() { $$$BODY }' --content 'function CreateUser() { return 42 }'
-krn code insert-before --file script.sh --pattern 'function deploy() { $$$BODY }' --content 'function log() { echo ok; }'
-krn code insert-after --file .gitlab-ci.yml --lang yaml --pattern 'build: { $$$JOB }' --content 'test: { script: npm test }'
-krn code remove --file styles.scss --lang css --pattern '$COLOR: red;'
-```
-
-The pattern must resolve to exactly one match. Missing, ambiguous, unsupported, unavailable-grammar, malformed, stale, or invalid targets fail with a non-zero status and leave the file unchanged. KRn verifies ast-grep's UTF-8 byte range against the local source, rejects the edit if the candidate has more tree-sitter `ERROR` nodes than the original (so files with pre-existing errors stay editable), additionally parses `.go` results with Go's standard parser, generates a unified diff, and writes atomically only after validation. Tree-sitter recovers silently from some truncated input, such as a missing closing brace in TypeScript or an unterminated `if` in Bash, so this check is not a full syntax guarantee outside Go. Repeating an insert with identical adjacent content is a no-op. It preserves unrelated source bytes and does not format or semantically interpret code.
-
-This boundary is intentional: the model decides the structural pattern, content, and semantic intent; KRn resolves the external match, performs the byte-span transformation, validates the candidate, and exposes the resulting diff. Examples can target TypeScript, JavaScript, Bash, YAML/GitLab CI, Go, CSS, and CSS-compatible SCSS. The installed ast-grep grammar set determines the available language names; for example, current ast-grep releases provide `css` but may not provide a separate `scss` grammar, so unsupported `--lang` values fail cleanly. KRn does not maintain language grammars or syntax-version tables; parser and grammar updates belong to ast-grep and Tree-sitter tooling. Semantic validation, compilation, formatting, and type checking remain repository-native concerns. Run `go test ./...` and the repository's verification checks after edits.
-
-### End-to-end A/B evaluation
-
-`krn eval` is a separate experiment from `benchmark.sh`. It drives Codex; `krn eval-claude` runs the pi task manifest through Claude Code (see [Benchmarks](#claude-code-with-haiku-45)). `krn eval` evaluates the same task twice from fresh clones of the same committed `HEAD`:
-
-* A: Codex alone, with isolated Codex state.
-* B: the same Codex invocation plus the current KRn routing policy in isolated Codex instructions.
-
-Example:
-
-```sh
-krn eval --task task.txt --verify 'go test ./...' --model MODEL --reasoning-effort high --json
-```
-
-The harness preserves each prompt, metadata, Codex JSONL stdout, stderr, verification output, and a `report.json` under `.git/krn/evals/` (or `--output DIR`). The report measures verified completion, wall time, tool/execution events, and human-intervention events. Codex token totals and peak context are reported as `unavailable` unless the CLI JSONL contains explicit usage fields; the harness never estimates them from output size. Deltas involving unavailable values are also `unavailable`.
-
-The verifier is run after Codex exits in each fresh checkout. A run is verified complete only when both Codex and the explicit verifier succeed. The command is non-interactive and uses automatic approval, so human interventions are counted from explicit intervention events in the event stream; this is not a substitute for measuring an interactive operator.
-
-`benchmark.sh` remains the deterministic KRn cache-mechanism benchmark and is not replaced by this end-to-end experiment.
-
-### Local models with pi
-
-`krn find` takes plain words or identifiers. It splits identifiers (camelCase, snake_case), drops stopwords, weights terms by rarity, prefers definition lines and files that match several terms, and prints at most `--max-files` files (default 5), each with up to three hits: line number, enclosing symbol, and two lines of context. Output stays under `--budget` bytes (default 2400). `--regex` restores the old raw-pattern behaviour.
-
-`krn map` prints a signatures-only repository map for JS/TS/TSX, Python, and Go: tree-sitter definitions and references, a reference graph ranked with personalized PageRank toward `--focus` terms and dirty files, fitted to `--tokens` (default 800). PageRank passes a file's rank to the definitions it references, so a definition whose name contains focus terms also gets a boost from its own file's relevance and is listed above the code it calls. It starts with a short header (the README's first paragraph or the manifest description, and the top-level directory layout) that takes at most a third of the budget and is cut at a word boundary; a line cut down to its bare label is dropped. Tags are cached in `.git/krn/cache/map/` by blob hash.
-
-`integrations/pi/krn.ts` is a [pi](https://github.com/earendil-works/pi) extension. `install.sh` copies it to `~/.pi/agent/extensions/krn/index.ts` when pi is detected; `krn uninstall` removes it. It has three parts. Only the map is on by default; set a variable to `1` to enable a part or `0` to disable it:
-
-```text
-first prompt in a Git repo (and no file path in it)
-   |
-   v
-krn map --focus PROMPT --tokens 800
-   |  source files ── tree-sitter ──> definitions + references  (tags cached by blob hash)
-   |  references between files ────> graph ── personalized PageRank toward prompt terms, dirty files
-   |  header (README / manifest, layout) + top signatures, cut to the budget
-   v
-appended as a message after the system prompt  ──>  model answers or reads/greps further
-(system prompt untouched: the KV prefix cache stays valid across turns)
-
-optional: find_code tool (B) ── krn find       bash search output > 6000 bytes (A) ── 40 lines + saved log
-```
-
-* `KRN_PI_MAP` (C, default on): on the first prompt of a session, appends `krn map --focus PROMPT` as a message. It never edits the system prompt, so the KV prefix cache stays valid. It is skipped when the prompt already names a file path.
-* `KRN_PI_TOOL` (B, default off): registers a `find_code` tool backed by `krn find`.
-* `KRN_PI_BOUND` (A, default off): output from grep/find/ls or search commands run in bash, over 6000 bytes, is cut to 40 lines; the full text is saved under `.git/krn/runs/`. An empty search gets `krn find` hits for the same words appended.
-
-Every part fails open outside a Git repository or when `krn` errors. Further variables: `KRN_PI_MAP_TOKENS` (map budget, default 800), `KRN_PI_BOUND_BYTES` (bounding threshold, default 6000), and `KRN_BIN` (the `krn` executable, default `krn` on `PATH`).
-
-`krn eval-pi` runs pi non-interactively (`pi -p --mode json --no-session --no-extensions`, plus `-e` with the extension for KRn variants) on fresh detached clones, once per variant, task, and seed. It grades the final answer against regexes and optional verify commands, and writes `results.jsonl` and `report.md`. Variant T is a baseline without KRn: [`eval/baselines/pi-tree.ts`](eval/baselines/pi-tree.ts) gives the first prompt a plain `git ls-files` list at the map's byte budget. `krn eval-claude` runs the same manifest through `claude -p --safe-mode` (Haiku 4.5 by default) and adds the variant's text with `--append-system-prompt`; it stops starting runs once the reported cost reaches `--total-budget-usd` (default 10).
-
-Measured results are in [Benchmarks](#benchmarks). The map alone matched all three parts there, so it is the only default. A plain file list matched the map's correctness but took about 40% longer per correct answer. The hardest task was solved in only 4 of 18 map runs: asked where a rest timer's end time is computed, the model usually cited the first line of `startRest` instead of the assignment three lines below it, and the default constant instead of the per-exercise value. Signatures show where a function starts, not which line inside it does the work; this is a known weakness in precise line citation.
-
-To use it interactively, pi's `models.json` needs the served model and `settings.json` needs it as `defaultModel` (the eval passes `--provider`/`--model` and an isolated `PI_CODING_AGENT_DIR` instead). With `"reasoning": false` and a `contextWindow` no larger than the server's limit, `pi` in any Git repository gets the map on its first prompt. When scripting `pi -p`, redirect stdin (`pi -p '...' </dev/null`): pi reads piped stdin as extra prompt input and waits for it to close. `krn eval-pi` runs pi with stdin on the null device.
-
-## Storage and privacy
-
-KRn uses local files and existing repository tools. It has no daemon, cloud backend, network service, or telemetry service.
-
-The installer writes only to `~/.local/bin/krn`, the managed Codex instruction block, the managed Claude Code instruction block (when Claude Code is detected), the pi extension (when pi is detected), and an ast-grep install when ast-grep is missing (user-local via npm, Cargo, or pip, otherwise Homebrew).
-
-Repository-private KRn data is stored under the Git directory:
-
-```text
-<repo>/.git/krn/state.json
-<repo>/.git/krn/metrics.jsonl
-<repo>/.git/krn/cache/<content-key>.json
-<repo>/.git/krn/cache/map/               tree-sitter tags for krn map, by blob hash
-<repo>/.git/krn/runs/<timestamp>-<operation>.log
-```
-
-The optional team-owned verification configuration is stored at the repository root:
-
-```text
-<repo>/.kern/config.json
-```
-
-Logs and state are local and may contain command output or task text.
-
-Metrics record measurements available to KRn. Model token counts are recorded as `unavailable` when they were not supplied.
-
-Source files, Git, manifests, tests, compilers, CI, and package managers remain authoritative.
-
-## Research behind the architecture
-
-KRn combines ideas supported by research across context retrieval, context optimization, and incremental computation.
-
-These sources motivate individual design decisions in the settings they evaluate. They do not establish that KRn's particular combination is globally optimal or that KRn itself reduces model reasoning or token consumption.
-
-KRn therefore treats its architecture as falsifiable and distinguishes research-supported principles from locally measured behavior and unproven hypotheses.
-
-| KRn decision or feature                                 | Why                                                                                                                                                          | Evidence                                                                                                                                                                                                                                                                                                                                                                               |
-| ------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Bounded context and recoverable projections             | Retrieval quality is not the same as dumping more context into the model; KRn shows a small projection while retaining recoverable full evidence.            | **[ContextBench: A Benchmark for Context Retrieval in Coding Agents — Han Li et al., 2026, arXiv preprint](https://arxiv.org/abs/2602.05892)** — Evaluates 1,136 tasks across 66 repositories and reports recall/precision gaps plus a gap between explored and used context.                                                                                                          |
-| Deterministic retrieval before model reasoning          | Repository facts that ordinary tools can establish reliably do not require probabilistic inference.                                                          | **[ContextBench: A Benchmark for Context Retrieval in Coding Agents — Han Li et al., 2026, arXiv preprint](https://arxiv.org/abs/2602.05892)** — Reports recall-over-precision behavior in evaluated models, motivating bounded retrieval rather than indiscriminate context accumulation.                                                                                             |
-| Do not assume one retrieval family is universally best  | KRn uses ripgrep and explicit repository facts rather than embeddings or a vector database; it added a repository map only after a local ablation showed a gain. | **[Agent Retrieval Bench: Evaluating Repository Context Retrieval for Coding Agents — Bowen Qin and Yi Xie, 2026, arXiv preprint](https://arxiv.org/abs/2607.24882)** — Evaluates 427 samples from 25 repositories and reports that lexical, RepoMap, embedding, and agent-context approaches perform differently across tasks and metrics; no retrieval family dominates universally. |
-| Context externalization and compression                 | Long trajectories can accumulate irrelevant history; KRn retains full evidence outside active model context and exposes bounded projections.                 | **[ACON: Optimizing Context Compression for Long-horizon LLM Agents — Minki Kang et al., 2026, Lifelong Agent @ ICLR 2026 workshop](https://openreview.net/forum?id=x0alNh5o8v)** — Reports 26–54% lower peak tokens in its evaluated agent settings while largely preserving task performance. KRn does not claim those results for itself.                                           |
-| Dependency-aware caching and invalidation               | Previously computed results should be reused only while the inputs determining them remain valid.                                                            | **[Build Systems à la Carte — Andrey Mokhov, Neil Mitchell, and Simon Peyton Jones, 2018, ICFP](https://doi.org/10.1145/3236774)** — Separates dependency structure from rebuild decisions and analyzes persistent build information, motivating explicit dependencies and conservative invalidation.                                                                                  |
-| Do not infer semantic abstraction from repetition alone | Repeated shell commands do not establish semantic equivalence or safe parameterization. KRn therefore reports exact repetition only as a review signal.      | **[DreamCoder: Bootstrapping Inductive Program Synthesis with Wake-Sleep Library Learning — Kevin Ellis et al., 2021, PLDI](https://doi.org/10.1145/3453483.3454080)** — Studies library learning inside a defined synthesis language and domain. It does not establish that arbitrary agent execution trajectories can be safely generalized from repetition alone.                   |
-| Minimal scaffolding                                     | Additional agent machinery is not automatically an improvement, so KRn keeps its substrate small unless measured workload evidence justifies more machinery. | **[ContextBench: A Benchmark for Context Retrieval in Coding Agents — Han Li et al., 2026, arXiv preprint](https://arxiv.org/abs/2602.05892)** — Reports only marginal retrieval gains from more sophisticated scaffolding in its evaluated setting; this supports measuring additional complexity rather than assuming it is beneficial.                                              |
-
-## Evidence status
-
-### Research-supported principles
-
-The cited work supports, within its evaluated settings:
-
-* careful and bounded context retrieval
-* context externalization/compression as a potentially useful optimization
-* evaluating retrieval strategies rather than assuming one universally dominates
-* explicit dependency and rebuild decisions for deterministic computation
-
-These results motivate KRn's architecture. They do not establish KRn's effectiveness.
-
-### Implemented and locally verified KRn mechanisms
-
-The source, tests, and benchmark establish:
-
-* Git/filesystem reconstruction
-* bounded projections with recoverable full logs
-* fail-open verification discovery
-* explicit semantic state
-* structured command execution
-* canonicalized explicit dependencies
-* dependency content fingerprinting
-* provenance-checked cache records
-* cache-result integrity validation
-* conservative cache invalidation
-* malformed/stale/tampered cache rejection
-* JSONL metrics
-* marker-based idempotent Codex and Claude Code integration
-* ranked natural-language search (`krn find`)
-* token-budgeted, focus-ranked repository map with a blob-hash tag cache (`krn map`)
-* pi extension install and marker-checked removal
-* argument validation
-
-`go test ./...`, `go test -race ./...`, `go vet ./...`, shell syntax checks, and the benchmark provide executable checks for these local behaviors.
-
-### Directly measured efficiency
-
-The benchmark demonstrates a narrow deterministic optimization:
-
-```text
-same command
-+ same repository
-+ same declared dependencies
-+ same dependency contents
-+ valid cache provenance
-        ↓
-previous result can be reused
-        ↓
-one repeated command execution avoided
-```
-
-It also verifies:
-
-```text
-changed declared dependency  → cache miss
-unrelated file change        → cache remains applicable
-failed execution             → not cached
-different dependency         → cache miss
-malformed/stale record       → cache miss
-tampered/mismatched record   → cache miss
-```
-
-This establishes command-execution reuse under the declared dependency model.
-
-It does not establish model-level efficiency. The agent-level measurements are in [Benchmarks](#benchmarks). With pi and one local model, a first-turn map raised localization correctness from 22% to 81% (pooled 95% intervals 15–32% and 72–88%). A plain file list matched that correctness, and KRn's ranked map reached it about 40% faster. With Claude Code on Haiku 4.5, no variant changed correctness measurably, and the installed routing policy cost about 15% more.
-
-### KRn-specific hypotheses
-
-The broader hypothesis remains unproven:
-
-> Moving deterministic or reconstructable work outside repeated model-driven execution may reduce the cognition or context required per verified useful coding outcome.
-
-Outside the local pi evaluation, current measurements do **not** establish:
-
-* fewer agent tokens
-* less agent reasoning
-* higher coding-task completion
-* lower end-to-end agent wall time
-* fewer human interventions
-* better real-world coding-agent performance
-
-Those claims require measurement on repeated real agent workloads.
-
-`benchmark.sh` is therefore a local falsification harness for deterministic execution and cache behavior, not evidence that KRn is globally optimal or that it reduces model-token consumption.
-
-## What KRn deliberately does not do
-
-KRn does not add these by default:
-
-* vector database or embeddings
-* semantic operation router
-* autonomous operation promotion
-* generalized trajectory synthesis
-* daemon or cloud backend
-* planner/reviewer/scout agent swarm
-* universal repository graph
-* workflow engine or custom DSL
-* generic long-term AI memory
-* telemetry backend
-
-These technologies are not inherently bad.
-
-They are outside KRn until a demonstrated workload shows that adding one improves the relevant efficiency frontier enough to justify its context, runtime, maintenance, and failure-surface cost.
-
-## Current limitation
-
-The most important limitation of deterministic cache reuse is explicit dependency completeness.
-
-KRn can establish:
-
-```text
-declared dependency unchanged
-```
-
-It cannot establish:
-
-```text
-caller declared every dependency that can affect this command
-```
-
-Therefore a cache hit proves validity only under KRn's declared-input model.
-
-Likewise, `--verified` records an external assertion. It does not prove semantic equivalence or complete applicability.
-
-KRn deliberately fails open where it cannot establish those properties.
-
-## Related work
-
-Codex and Claude Code are the agents/harnesses that reason and use tools; KRn is a deterministic optimization substrate around that workflow.
-
-Aider's RepoMap builds a ranked symbol map and sends selected portions to the model. `krn map` follows the same idea (tree-sitter tags, a reference graph ranked with PageRank, a token budget), is computed on demand rather than maintained, and is delivered once, on pi's first prompt.
-
-Otherwise KRn reconstructs repository facts using Git/filesystem tools, uses ripgrep for bounded search, and keeps recoverable evidence plus explicit-input cache records.
-
-* [OpenAI Agents API architecture](https://developers.openai.com/api/docs/guides/agents-api/architecture) distinguishes the harness that runs the model/tool loop from the environment where work executes.
-* [Aider repository map documentation](https://aider.chat/docs/repomap.html) describes its symbol map, dependency-graph ranking, and token-budgeted context selection.
+Details: [docs/commands.md](docs/commands.md). pi specifics: [docs/pi.md](docs/pi.md).
 
 ## Uninstall
 
@@ -583,6 +175,19 @@ This removes KRn's managed blocks from the Codex `AGENTS.md` and the Claude Code
 When invoked from the installed `~/.local/bin/krn`, it also removes that binary.
 
 It does not remove repository-private `.git/krn` records.
+
+## Documentation
+
+| doc | contents |
+|---|---|
+| [docs/benchmarks.md](docs/benchmarks.md) | method, every run and dropped experiment, pooled intervals, Claude Code results, cache benchmark |
+| [docs/pi.md](docs/pi.md) | `krn find`, `krn map`, the pi extension, its settings, and `krn eval-pi`/`eval-claude` |
+| [docs/commands.md](docs/commands.md) | integration policy, cache semantics, structural edits, Codex A/B harness |
+| [docs/design.md](docs/design.md) | memory model, storage and privacy, non-goals, limits, related work |
+| [docs/evidence.md](docs/evidence.md) | research behind the architecture and what is and is not established |
+| [docs/plans/](docs/plans/) | design plans and the [investigation log](docs/plans/2026-09-26-pi-lean-investigation.md) of the evaluations |
+| [eval/results/](eval/results/) | raw results for every run |
+
 
 ## Contributing
 

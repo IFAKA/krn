@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"math"
 	"os"
@@ -45,10 +46,14 @@ type piTask struct {
 type piVariant struct {
 	Name             string
 	Bound, Tool, Map bool
+	// Tree is the no-KRn baseline: the first prompt gets a plain `git ls-files`
+	// list cut to the map's byte budget instead of the ranked map.
+	Tree bool
 }
 
 var piVariants = map[string]piVariant{
 	"none": {Name: "none"},
+	"T":    {Name: "T", Tree: true},
 	"A":    {Name: "A", Bound: true},
 	"AB":   {Name: "AB", Bound: true, Tool: true},
 	"ABC":  {Name: "ABC", Bound: true, Tool: true, Map: true},
@@ -71,23 +76,21 @@ type piResult struct {
 	Output       int64          `json:"output_tokens"`
 	ToolCalls    map[string]int `json:"tool_calls"`
 	FindCode     int            `json:"find_code_calls"`
+	KrnCalls     int            `json:"krn_calls,omitempty"`
+	CostUSD      float64        `json:"cost_usd,omitempty"`
 	Final        string         `json:"final_answer"`
 	GradeDetails string         `json:"grade"`
 }
 
 func RunPi(args []string) error {
 	f := workspace.FlagSet("eval-pi")
-	manifestPath := f.String("manifest", "eval/pi-local-manifest.json", "task manifest")
-	output := f.String("output", "", "evidence directory")
+	sf := addSuiteFlags(f, "none,A,AB,ABC", 3)
 	model := f.String("model", "", "pi model id (provider omlx)")
 	provider := f.String("provider", "omlx", "pi provider")
 	agentDir := f.String("agent-dir", "", "PI_CODING_AGENT_DIR for isolated pi config")
 	extension := f.String("extension", "integrations/pi/krn.ts", "KRn pi extension")
+	treeExtension := f.String("tree-extension", "eval/baselines/pi-tree.ts", "baseline extension for variant T (file list, no KRn)")
 	krnBin := f.String("krn", "", "krn binary used by the extension (default: this executable)")
-	workdir := f.String("workdir", "", "where clones are created (must not be under a directory with CLAUDE.md/AGENTS.md)")
-	variantList := f.String("variants", "none,A,AB,ABC", "comma-separated variants")
-	seeds := f.Int("seeds", 3, "repetitions per task and variant")
-	only := f.String("tasks", "", "comma-separated task ids (default all)")
 	timeout := f.Duration("timeout", 10*time.Minute, "per-run timeout")
 	if err := f.Parse(args); err != nil {
 		return err
@@ -95,96 +98,147 @@ func RunPi(args []string) error {
 	if *model == "" {
 		return errors.New("eval-pi requires --model")
 	}
-	r, err := workspace.Discover()
+	s, err := sf.load("pi", func(v string) bool { _, ok := piVariants[v]; return ok })
 	if err != nil {
 		return err
 	}
-	b, err := os.ReadFile(filepath.Join(r.Root, *manifestPath))
+	defaultKrn(krnBin)
+	ext, _ := filepath.Abs(filepath.Join(s.root, *extension))
+	treeExt, _ := filepath.Abs(filepath.Join(s.root, *treeExtension))
+	all, err := s.run(map[string]any{"model": *model, "provider": *provider, "krn": *krnBin, "extension": ext, "tree_extension": treeExt},
+		func(repo string, task piTask, variant string, seed int, evidence string) piResult {
+			return runPi(repo, task, piVariants[variant], seed, *model, *provider, *agentDir, ext, treeExt, *krnBin, *timeout, evidence)
+		})
 	if err != nil {
 		return err
+	}
+	return s.report(all, "")
+}
+
+// suite is what eval-pi and eval-claude share: tasks from a manifest, a fresh
+// clone per run, variant order rotated per task and seed, results.jsonl and report.md.
+type suite struct {
+	root, evidence, workdir, manifest string
+	repos                             map[string]piRepo
+	tasks                             []piTask
+	variants                          []string
+	seeds                             int
+}
+
+type suiteFlags struct {
+	manifest, output, workdir, variants, tasks *string
+	seeds                                      *int
+}
+
+func addSuiteFlags(f *flag.FlagSet, variants string, seeds int) suiteFlags {
+	return suiteFlags{
+		manifest: f.String("manifest", "eval/pi-local-manifest.json", "task manifest"),
+		output:   f.String("output", "", "evidence directory"),
+		workdir:  f.String("workdir", "", "where clones are created (must not be under a directory with CLAUDE.md/AGENTS.md)"),
+		variants: f.String("variants", variants, "comma-separated variants"),
+		tasks:    f.String("tasks", "", "comma-separated task ids (default all)"),
+		seeds:    f.Int("seeds", seeds, "repetitions per task and variant"),
+	}
+}
+
+func (sf suiteFlags) load(name string, known func(string) bool) (*suite, error) {
+	r, err := workspace.Discover()
+	if err != nil {
+		return nil, err
+	}
+	b, err := os.ReadFile(filepath.Join(r.Root, *sf.manifest))
+	if err != nil {
+		return nil, err
 	}
 	var m piManifest
 	if err := json.Unmarshal(b, &m); err != nil {
-		return fmt.Errorf("manifest: %w", err)
+		return nil, fmt.Errorf("manifest: %w", err)
 	}
-	var variants []piVariant
-	for _, name := range strings.Split(*variantList, ",") {
-		v, ok := piVariants[strings.TrimSpace(name)]
-		if !ok {
-			return fmt.Errorf("unknown variant %q", name)
+	s := &suite{root: r.Root, manifest: *sf.manifest, repos: m.Repos, seeds: *sf.seeds}
+	for _, v := range strings.Split(*sf.variants, ",") {
+		if v = strings.TrimSpace(v); !known(v) {
+			return nil, fmt.Errorf("unknown variant %q", v)
 		}
-		variants = append(variants, v)
+		s.variants = append(s.variants, v)
 	}
 	wanted := map[string]bool{}
-	for _, id := range strings.Split(*only, ",") {
+	for _, id := range strings.Split(*sf.tasks, ",") {
 		if id = strings.TrimSpace(id); id != "" {
 			wanted[id] = true
 		}
 	}
-	var tasks []piTask
 	for _, t := range m.Tasks {
 		if len(wanted) == 0 || wanted[t.ID] {
-			tasks = append(tasks, t)
+			s.tasks = append(s.tasks, t)
 		}
 	}
+	s.evidence = *sf.output
+	if s.evidence == "" {
+		s.evidence = filepath.Join(r.Private, "evals", name+"-"+time.Now().UTC().Format("20060102T150405Z"))
+	}
+	s.workdir = *sf.workdir
+	if s.workdir == "" {
+		s.workdir = filepath.Join(os.TempDir(), fmt.Sprintf("krn-eval-%s-%d", name, os.Getpid()))
+	}
+	for _, d := range []string{s.evidence, s.workdir} {
+		if err := os.MkdirAll(d, 0700); err != nil {
+			return nil, err
+		}
+	}
+	return s, nil
+}
+
+func (s *suite) run(config map[string]any, run func(repo string, task piTask, variant string, seed int, evidence string) piResult) ([]piResult, error) {
+	out, err := os.OpenFile(filepath.Join(s.evidence, "results.jsonl"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return nil, err
+	}
+	defer out.Close()
+	config["variants"], config["seeds"], config["manifest"], config["started"] = strings.Join(s.variants, ","), s.seeds, s.manifest, time.Now().UTC().Format(time.RFC3339)
+	_ = workspace.WriteJSON(filepath.Join(s.evidence, "config.json"), config)
+	var all []piResult
+	total := s.seeds * len(s.tasks) * len(s.variants)
+	n := 0
+	for seed := 0; seed < s.seeds; seed++ {
+		for ti, task := range s.tasks {
+			// Rotate variant order per task and seed so warm prefix caches and
+			// server state are not systematically in one variant's favor.
+			for k := range s.variants {
+				v := s.variants[(k+ti+seed)%len(s.variants)]
+				n++
+				repo, err := materialize(s.root, s.repos[task.Repo], filepath.Join(s.workdir, fmt.Sprintf("%s-%s-%d", task.ID, v, seed)))
+				if err != nil {
+					return nil, fmt.Errorf("%s: %w", task.ID, err)
+				}
+				res := run(repo, task, v, seed, filepath.Join(s.evidence, fmt.Sprintf("%s.%s.%d", task.ID, v, seed)))
+				_ = os.RemoveAll(repo)
+				line, _ := json.Marshal(res)
+				_, _ = out.Write(append(line, '\n'))
+				all = append(all, res)
+				fmt.Printf("[%d/%d] %-14s %-6s seed=%d correct=%-5v wall=%5.1fs turns=%2d uncached=%6d find_code=%d\n", n, total, task.ID, v, seed, res.Correct, float64(res.WallMS)/1000, res.Turns, res.UncachedIn, res.FindCode)
+			}
+		}
+	}
+	_ = os.Remove(s.workdir)
+	return all, nil
+}
+
+func (s *suite) report(all []piResult, extra string) error {
+	report := piReport(all, s.variants) + extra
+	if err := os.WriteFile(filepath.Join(s.evidence, "report.md"), []byte(report), 0600); err != nil {
+		return err
+	}
+	fmt.Print(report)
+	fmt.Printf("evidence: %s\n", s.evidence)
+	return nil
+}
+
+func defaultKrn(krnBin *string) {
 	if *krnBin == "" {
 		if exe, e := os.Executable(); e == nil {
 			*krnBin = exe
 		}
 	}
-	ext, _ := filepath.Abs(filepath.Join(r.Root, *extension))
-	evidence := *output
-	if evidence == "" {
-		evidence = filepath.Join(r.Private, "evals", "pi-"+time.Now().UTC().Format("20060102T150405Z"))
-	}
-	if err := os.MkdirAll(evidence, 0700); err != nil {
-		return err
-	}
-	wd := *workdir
-	if wd == "" {
-		wd = filepath.Join(os.TempDir(), fmt.Sprintf("krn-eval-pi-%d", os.Getpid()))
-	}
-	if err := os.MkdirAll(wd, 0700); err != nil {
-		return err
-	}
-	resultsPath := filepath.Join(evidence, "results.jsonl")
-	out, err := os.OpenFile(resultsPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_ = workspace.WriteJSON(filepath.Join(evidence, "config.json"), map[string]any{"model": *model, "provider": *provider, "variants": *variantList, "seeds": *seeds, "manifest": *manifestPath, "krn": *krnBin, "extension": ext, "started": time.Now().UTC().Format(time.RFC3339)})
-	var all []piResult
-	total := *seeds * len(tasks) * len(variants)
-	n := 0
-	for seed := 0; seed < *seeds; seed++ {
-		for ti, task := range tasks {
-			// Rotate variant order per task and seed so warm prefix caches and
-			// server state are not systematically in one variant's favor.
-			for k := range variants {
-				v := variants[(k+ti+seed)%len(variants)]
-				n++
-				repo, err := materialize(r.Root, m.Repos[task.Repo], filepath.Join(wd, fmt.Sprintf("%s-%s-%d", task.ID, v.Name, seed)))
-				if err != nil {
-					return fmt.Errorf("%s: %w", task.ID, err)
-				}
-				res := runPi(repo, task, v, seed, *model, *provider, *agentDir, ext, *krnBin, *timeout, filepath.Join(evidence, fmt.Sprintf("%s.%s.%d", task.ID, v.Name, seed)))
-				_ = os.RemoveAll(repo)
-				line, _ := json.Marshal(res)
-				_, _ = out.Write(append(line, '\n'))
-				all = append(all, res)
-				fmt.Printf("[%d/%d] %-14s %-4s seed=%d correct=%-5v wall=%5.1fs turns=%2d uncached=%6d find_code=%d\n", n, total, task.ID, v.Name, seed, res.Correct, float64(res.WallMS)/1000, res.Turns, res.UncachedIn, res.FindCode)
-			}
-		}
-	}
-	_ = os.Remove(wd)
-	report := piReport(all, variants)
-	if err := os.WriteFile(filepath.Join(evidence, "report.md"), []byte(report), 0600); err != nil {
-		return err
-	}
-	fmt.Print(report)
-	fmt.Printf("evidence: %s\n", evidence)
-	return nil
 }
 
 func materialize(root string, repo piRepo, dest string) (string, error) {
@@ -204,11 +258,13 @@ func materialize(root string, repo piRepo, dest string) (string, error) {
 	return dest, nil
 }
 
-func runPi(repo string, task piTask, v piVariant, seed int, model, provider, agentDir, ext, krnBin string, timeout time.Duration, evidence string) piResult {
+func runPi(repo string, task piTask, v piVariant, seed int, model, provider, agentDir, ext, treeExt, krnBin string, timeout time.Duration, evidence string) piResult {
 	res := piResult{Task: task.ID, Category: task.Category, Variant: v.Name, Seed: seed, ToolCalls: map[string]int{}}
 	tools := "read,bash,edit,write,grep,find,ls"
 	args := []string{"-p", "--mode", "json", "--no-session", "--no-extensions", "--provider", provider, "--model", model}
-	if v.Bound || v.Tool || v.Map {
+	if v.Tree {
+		args = append(args, "-e", treeExt)
+	} else if v.Bound || v.Tool || v.Map {
 		args = append(args, "-e", ext)
 		if v.Tool {
 			tools += ",find_code"
@@ -326,13 +382,13 @@ func gradePi(repo string, task piTask, final, prefix string) (bool, string) {
 	return false, prefix + strings.Join(fails, "; ")
 }
 
-func piReport(all []piResult, variants []piVariant) string {
+func piReport(all []piResult, variants []string) string {
 	var b strings.Builder
 	b.WriteString("| variant | correct | accuracy | correct/min | median wall s | mean wall s | mean turns | mean uncached in | mean cached in | mean out | find_code/run |\n|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 	for _, v := range variants {
 		var rs []piResult
 		for _, r := range all {
-			if r.Variant == v.Name {
+			if r.Variant == v {
 				rs = append(rs, r)
 			}
 		}
@@ -357,11 +413,11 @@ func piReport(all []piResult, variants []piVariant) string {
 		}
 		sort.Float64s(walls)
 		k := float64(len(rs))
-		fmt.Fprintf(&b, "| %s | %d/%d | %.0f%% | %.2f | %.1f | %.1f | %.1f | %.0f | %.0f | %.0f | %.1f |\n", v.Name, correct, len(rs), 100*float64(correct)/k, float64(correct)/(wall/60), walls[len(walls)/2], wall/k, turns/k, unc/k, cached/k, outTok/k, fc/k)
+		fmt.Fprintf(&b, "| %s | %d/%d | %.0f%% | %.2f | %.1f | %.1f | %.1f | %.0f | %.0f | %.0f | %.1f |\n", v, correct, len(rs), 100*float64(correct)/k, float64(correct)/(wall/60), walls[len(walls)/2], wall/k, turns/k, unc/k, cached/k, outTok/k, fc/k)
 	}
 	b.WriteString("\nPer task (correct runs / runs, mean wall s):\n\n| task |")
 	for _, v := range variants {
-		b.WriteString(" " + v.Name + " |")
+		b.WriteString(" " + v + " |")
 	}
 	b.WriteString("\n|---|" + strings.Repeat("---:|", len(variants)) + "\n")
 	var ids []string
@@ -378,7 +434,7 @@ func piReport(all []piResult, variants []piVariant) string {
 			var c, n int
 			var w float64
 			for _, r := range all {
-				if r.Task == id && r.Variant == v.Name {
+				if r.Task == id && r.Variant == v {
 					n++
 					w += float64(r.WallMS) / 1000
 					if r.Correct {

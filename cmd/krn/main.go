@@ -44,6 +44,8 @@ func main() {
 		err = eval.RunSuite(os.Args[2:])
 	case "eval-pi":
 		err = eval.RunPi(os.Args[2:])
+	case "eval-claude":
+		err = eval.RunClaude(os.Args[2:])
 	case "integrate":
 		err = integrate.Run(os.Args[2:])
 	case "doctor":
@@ -63,5 +65,5 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("krn " + workspace.Version + "\nusage: krn context|find|map|code|verify|state|exec|eval|eval-suite|eval-pi|integrate|doctor|uninstall")
+	fmt.Println("krn " + workspace.Version + "\nusage: krn context|find|map|code|verify|state|exec|eval|eval-suite|eval-pi|eval-claude|integrate|doctor|uninstall")
 }

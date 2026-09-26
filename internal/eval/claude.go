@@ -58,7 +58,8 @@ func RunClaude(args []string) error {
 	if err := os.Symlink(*krnBin, filepath.Join(binDir, "krn")); err != nil {
 		return err
 	}
-	defer os.RemoveAll(binDir)
+	// s.run removes the work directory only when empty, so drop bin/ first.
+	defer func() { _ = os.RemoveAll(binDir); _ = os.Remove(s.workdir) }()
 	var spent float64
 	all, err := s.run(map[string]any{"agent": "claude", "model": *model, "krn": *krnBin, "max_budget_usd": *runBudget, "total_budget_usd": *totalBudget},
 		func(repo string, task piTask, variant string, seed int, evidence string) piResult {

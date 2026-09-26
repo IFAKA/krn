@@ -152,6 +152,9 @@ func Uninstall() error {
 			return err
 		}
 	}
+	if err := removePiExtension(); err != nil {
+		return err
+	}
 	exe, err := os.Executable()
 	if err != nil {
 		return nil
@@ -168,3 +171,28 @@ func Uninstall() error {
 	}
 	return nil
 }
+
+// removePiExtension deletes the pi extension that install.sh copies, but only when
+// its index.ts is KRn's, so a user's own extension named krn is left alone.
+func removePiExtension() error {
+	dir := os.Getenv("PI_CODING_AGENT_DIR")
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return nil
+		}
+		dir = filepath.Join(home, ".pi", "agent")
+	}
+	ext := filepath.Join(dir, "extensions", "krn")
+	b, err := os.ReadFile(filepath.Join(ext, "index.ts"))
+	if err != nil || !strings.Contains(string(b), piExtensionMarker) {
+		return nil
+	}
+	if err := os.RemoveAll(ext); err != nil {
+		return err
+	}
+	fmt.Printf("removed pi extension %s\n", ext)
+	return nil
+}
+
+const piExtensionMarker = "KRn for pi"

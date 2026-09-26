@@ -32,7 +32,7 @@ cd krn
 ./install.sh
 ```
 
-`install.sh` requires Go 1.24+, builds KRn, installs it at `~/.local/bin/krn`, installs the required `ast-grep` CLI when it is missing, and adds a small managed routing policy to `$CODEX_HOME/AGENTS.md` (default `~/.codex/AGENTS.md`). When Claude Code is detected (`claude` on `PATH` or an existing `$CLAUDE_CONFIG_DIR`/`~/.claude` directory), it also adds the same policy to `$CLAUDE_CONFIG_DIR/CLAUDE.md` (default `~/.claude/CLAUDE.md`). It tries npm, Cargo, and pip (installing into `~/.local` without sudo), then falls back to Homebrew, which installs into its own prefix. If either command is not on `PATH`, add `~/.local/bin` to it.
+`install.sh` requires Go 1.24+, builds KRn, installs it at `~/.local/bin/krn`, installs the required `ast-grep` CLI when it is missing, and adds a small managed routing policy to `$CODEX_HOME/AGENTS.md` (default `~/.codex/AGENTS.md`). When Claude Code is detected (`claude` on `PATH` or an existing `$CLAUDE_CONFIG_DIR`/`~/.claude` directory), it also adds the same policy to `$CLAUDE_CONFIG_DIR/CLAUDE.md` (default `~/.claude/CLAUDE.md`). When pi is detected (`pi` on `PATH` or an existing `$PI_CODING_AGENT_DIR`/`~/.pi/agent` directory), it copies the pi extension to `extensions/krn/index.ts` there. It tries npm, Cargo, and pip (installing into `~/.local` without sudo), then falls back to Homebrew, which installs into its own prefix. If either command is not on `PATH`, add `~/.local/bin` to it.
 
 ## Use
 
@@ -205,7 +205,7 @@ The verifier is run after Codex exits in each fresh checkout. A run is verified 
 
 `krn map` prints a signatures-only repository map for JS/TS/TSX, Python, and Go: tree-sitter definitions and references, a reference graph ranked with personalized PageRank toward `--focus` terms and dirty files, fitted to `--tokens` (default 800). Tags are cached in `.git/krn/cache/map/` by blob hash.
 
-`integrations/pi/krn.ts` is a [pi](https://github.com/earendil-works/pi) extension. Install it by copying it to `~/.pi/agent/extensions/krn/index.ts`. It has three parts. Only the map is on by default; set a variable to `1` to enable a part or `0` to disable it:
+`integrations/pi/krn.ts` is a [pi](https://github.com/earendil-works/pi) extension. `install.sh` copies it to `~/.pi/agent/extensions/krn/index.ts` when pi is detected; `krn uninstall` removes it. It has three parts. Only the map is on by default; set a variable to `1` to enable a part or `0` to disable it:
 
 * `KRN_PI_MAP` (C, default on): on the first prompt of a session, appends `krn map --focus PROMPT` as a message. It never edits the system prompt, so the KV prefix cache stays valid. It is skipped when the prompt already names a file path.
 * `KRN_PI_TOOL` (B, default off): registers a `find_code` tool backed by `krn find`.
@@ -249,7 +249,7 @@ Unknown side effects are never inferred safe. Callers must declare the complete 
 
 KRn uses local files and existing repository tools. It has no daemon, cloud backend, network service, or telemetry service.
 
-The installer writes only to `~/.local/bin/krn`, the managed Codex instruction block, the managed Claude Code instruction block (when Claude Code is detected), and an ast-grep install when ast-grep is missing (user-local via npm, Cargo, or pip, otherwise Homebrew).
+The installer writes only to `~/.local/bin/krn`, the managed Codex instruction block, the managed Claude Code instruction block (when Claude Code is detected), the pi extension (when pi is detected), and an ast-grep install when ast-grep is missing (user-local via npm, Cargo, or pip, otherwise Homebrew).
 
 Repository-private KRn data is stored under the Git directory:
 
@@ -432,7 +432,7 @@ KRn currently reconstructs repository facts using Git/filesystem tools, uses rip
 krn uninstall
 ```
 
-This removes KRn's managed blocks from the Codex `AGENTS.md` and the Claude Code `CLAUDE.md`.
+This removes KRn's managed blocks from the Codex `AGENTS.md` and the Claude Code `CLAUDE.md`, and the pi extension directory `~/.pi/agent/extensions/krn` when its `index.ts` is KRn's.
 
 When invoked from the installed `~/.local/bin/krn`, it also removes that binary.
 

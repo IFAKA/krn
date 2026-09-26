@@ -137,9 +137,13 @@ func TestInstallScriptAndDirectIntegrationUseTheSamePolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	piDir := filepath.Join(installHome, ".pi", "agent")
+	if err := os.MkdirAll(piDir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command("sh", "install.sh")
 	cmd.Dir = testutil.ModuleRoot(t)
-	cmd.Env = append(os.Environ(), "GOMODCACHE="+strings.TrimSpace(string(modCache)), "HOME="+installHome, "CODEX_HOME="+installCodexHome, "CLAUDE_CONFIG_DIR="+filepath.Join(installHome, ".claude"), "PATH="+localBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cmd.Env = append(os.Environ(), "GOMODCACHE="+strings.TrimSpace(string(modCache)), "HOME="+installHome, "CODEX_HOME="+installCodexHome, "CLAUDE_CONFIG_DIR="+filepath.Join(installHome, ".claude"), "PI_CODING_AGENT_DIR="+piDir, "PATH="+localBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("install.sh failed: %v\n%s", err, output)
 	}
@@ -149,6 +153,38 @@ func TestInstallScriptAndDirectIntegrationUseTheSamePolicy(t *testing.T) {
 	}
 	if string(installed) != string(direct) {
 		t.Fatalf("install.sh and direct integration installed different policy:\ndirect=%q\nscript=%q", direct, installed)
+	}
+	ext, err := os.ReadFile(filepath.Join(piDir, "extensions", "krn", "index.ts"))
+	if err != nil || !strings.Contains(string(ext), piExtensionMarker) {
+		t.Fatalf("install.sh did not install the pi extension: %v", err)
+	}
+}
+
+func TestUninstallRemovesOnlyKRnPiExtension(t *testing.T) {
+	d := t.TempDir()
+	t.Setenv("PI_CODING_AGENT_DIR", d)
+	ext := filepath.Join(d, "extensions", "krn")
+	if err := os.MkdirAll(ext, 0700); err != nil {
+		t.Fatal(err)
+	}
+	index := filepath.Join(ext, "index.ts")
+	if err := os.WriteFile(index, []byte("// a user's own extension\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := removePiExtension(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(index); err != nil {
+		t.Fatalf("removed an extension that is not KRn's: %v", err)
+	}
+	if err := os.WriteFile(index, []byte("/**\n * "+piExtensionMarker+" — test\n */\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := removePiExtension(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(ext); !os.IsNotExist(err) {
+		t.Fatalf("KRn pi extension still present: %v", err)
 	}
 }
 

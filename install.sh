@@ -48,6 +48,12 @@ install -m 0755 "$TMP" "$HOME/.local/bin/krn"
 if command -v claude >/dev/null 2>&1 || [ -d "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" ]; then
 	"$HOME/.local/bin/krn" integrate claude
 fi
+PI_DIR="${PI_CODING_AGENT_DIR:-$HOME/.pi/agent}"
+if command -v pi >/dev/null 2>&1 || [ -d "$PI_DIR" ]; then
+	mkdir -p "$PI_DIR/extensions/krn"
+	install -m 0644 "$HERE/integrations/pi/krn.ts" "$PI_DIR/extensions/krn/index.ts"
+	printf 'Installed the pi extension to %s\n' "$PI_DIR/extensions/krn/index.ts"
+fi
 printf '\nInstalled krn to %s\n' "$HOME/.local/bin/krn"
 printf 'If krn is not found, add: export PATH="$HOME/.local/bin:$PATH"\n'
-printf 'Then: cd any-git-project && codex (or claude)\n'
+printf 'Then: cd any-git-project && codex (or claude, or pi)\n'

@@ -1,38 +1,35 @@
 # KRn
 
-**Make coding agents repeat less deterministic work.**
+**A small, local CLI that gives coding agents a ranked map of your repository and takes deterministic work out of the model's hands.**
 
-KRn is a research-informed deterministic optimization substrate for coding agents such as Codex, Claude Code, and pi. It reconstructs repository facts, bounds retrieved evidence, verifies work, records irreducible state and execution evidence, and safely reuses deterministic computation when explicit dependencies establish that reuse remains valid.
-
-The agent (Codex, Claude Code, or pi) stays in charge. KRn is the layer beneath and around it:
+KRn sits between a coding agent (pi, Claude Code, Codex) and your repository. It does the jobs a program can do exactly and cheaply: rank the code relevant to a question, search by plain words, make structural edits, run the project's checks, and cache repeated commands. The agent keeps doing the reasoning. Nothing runs in the background, and nothing leaves your machine.
 
 ```text
-          model
-            ↓
-Codex / Claude Code / pi      agent / harness
-            ↓
-           KRn                deterministic optimization substrate
-            ↓
-repository + existing tools
+     model
+       ↓
+  agent (pi, Claude Code, Codex)    reasons, decides, edits
+       ↓
+      KRn                           maps, searches, edits, verifies, caches
+       ↓
+  repository, Git, ripgrep, tree-sitter, ast-grep, your test commands
 ```
 
-Measured so far (method, noise, and limits in [Benchmarks](docs/benchmarks.md)):
+## Does it help?
 
-* **pi with a local 30B model:** a repository map on the first prompt raised correct answers from 42% to 85% (pooled over three runs). A plain `git ls-files` list did as well on correctness; KRn's ranked map reached it about 40% faster.
-* **Claude Code with Haiku 4.5:** vanilla Claude Code already answered 35 of 36 tasks. The KRn routing policy that `install.sh` adds made no measurable difference to correctness and cost about 15% more per task.
-* **Not measured:** Codex, Claude Code with larger models, and real bug-fix or feature work.
+It depends on the agent and the model. Measured on 12 tasks (9 "where is X implemented" questions, 3 small edits), 3 seeds each:
 
-Features that did not help were left off or dropped, and those runs are published too.
+| setup | without KRn | with KRn | takeaway |
+|---|---:|---:|---|
+| **pi + local 30B model** (M4 Pro) | 42% correct | **85% correct**, about 1.6× the correct answers per minute | Worth using. The small model guesses without looking; the map makes it search. |
+| same, a plain `git ls-files` list instead of KRn (one run) | | 92% correct, about 1.1× per minute | Any file list stops the guessing. KRn's ranking reaches the same accuracy about 40% faster. |
+| **Claude Code + Haiku 4.5** | 97% correct | 100% with the routing policy, at about 15% more cost | No measurable gain. These tasks are too easy for this model. |
+| Claude Code with Sonnet or Opus, Codex, real bug fixes | | | Not measured yet. |
 
-The engineering thesis is:
+At this sample size, differences of up to about 5 correct answers out of 36 are noise. Every run is in [docs/benchmarks.md](docs/benchmarks.md), including experiments that failed and were dropped, and the raw data is in [eval/results/](eval/results/). The harness is included, so you can run it on your own tasks.
 
-**When work can be reconstructed or safely reused deterministically, move it out of repeated model-driven execution.**
+## Quick start
 
-This is KRn's thesis, not a quotation from any research paper and not a claim that KRn reduces model reasoning, reduces tokens, or is globally optimal.
-
-## Install
-
-The repository currently ships a source-based installer, not a release binary or a verified public `curl | sh` endpoint.
+Requires Go 1.24+ and Git. There is no release binary yet.
 
 ```sh
 git clone https://github.com/IFAKA/krn.git
@@ -40,129 +37,92 @@ cd krn
 ./install.sh
 ```
 
-`install.sh` requires Go 1.24+, builds KRn, installs it at `~/.local/bin/krn`, installs the required `ast-grep` CLI when it is missing, and adds a small managed routing policy to `$CODEX_HOME/AGENTS.md` (default `~/.codex/AGENTS.md`). When Claude Code is detected (`claude` on `PATH` or an existing `$CLAUDE_CONFIG_DIR`/`~/.claude` directory), it also adds the same policy to `$CLAUDE_CONFIG_DIR/CLAUDE.md` (default `~/.claude/CLAUDE.md`). When pi is detected (`pi` on `PATH` or an existing `$PI_CODING_AGENT_DIR`/`~/.pi/agent` directory), it copies the pi extension to `extensions/krn/index.ts` there. It tries npm, Cargo, and pip (installing into `~/.local` without sudo), then falls back to Homebrew, which installs into its own prefix. If either command is not on `PATH`, add `~/.local/bin` to it.
+The installer:
 
-## Use
+* builds `krn` into `~/.local/bin` (add it to `PATH` if needed);
+* installs [ast-grep](https://ast-grep.github.io/) if it is missing, for `krn code`;
+* **pi:** copies the extension to `~/.pi/agent/extensions/krn/`, which adds the map to the first prompt of each session;
+* **Claude Code and Codex:** adds a short, marked routing block to `~/.claude/CLAUDE.md` and `~/.codex/AGENTS.md` that tells the agent when to call `krn`.
 
-```sh
-cd any-git-project
-codex    # or: claude, or: pi
-```
+After that, use your agent as usual inside any Git repository; there is no per-project setup. `krn uninstall` removes everything the installer added. Details are in [docs/commands.md](docs/commands.md#installation-and-integration).
 
-There is no `krn init`. The integration is global: an instruction block per agent for Codex and Claude Code (`krn integrate codex|claude`), and an extension for pi (copied by `install.sh`). The commands operate on the Git repository containing the current directory. pi's model and provider configuration is pi's own and outside KRn; see [Local models with pi](docs/pi.md).
+## What it looks like
 
-## Benchmarks
-
-### At a glance
-
-| if you use | measured | correct (of 36) | speed and cost | verdict |
-|---|---|---|---|---|
-| pi + local model (30B, M4 Pro) | no KRn, KRn map, plain file list (run 6) | 14 / 32 / 33 | correct per minute 0.94 / 1.50 / 1.07 | Use the map. Most of the gain comes from giving the model any map; KRn's ranking makes it about 40% faster than a file list. |
-| Claude Code + Haiku 4.5 | no KRn, KRn policy, KRn map, plain file list | 35 / 36 / 33 / 33 | $ per task 0.032 / 0.037 / 0.023 / 0.028 | No correctness gain; vanilla is near the ceiling on these tasks. The installed policy costs about 15% more. The map was fastest and cheapest but is not part of the Claude Code integration. |
-| Claude Code with Sonnet or Opus, Codex | not measured | | | unknown |
-| bug fixes and features | 3 small edit tasks, solved in nearly every variant | | | unknown |
-| `krn exec --cache` | correct reuse and invalidation (`benchmark.sh`) | | time saved not measured | mechanism only |
-
-Differences of about five correct answers or fewer out of 36 are noise at this size (see [docs/benchmarks.md](docs/benchmarks.md)). Other tools (Aider's repo map, LSP or MCP code-navigation servers) were not run; the plain file list stands in for "any map". Two of the three task repositories are private, so the numbers cannot be reproduced exactly elsewhere; the harness can.
-
-Full method, per-run tables, the dropped experiments, and the cache benchmark: [docs/benchmarks.md](docs/benchmarks.md).
-
-## Why KRn?
-
-A model context window is expensive working memory. Repository facts, command output, and repeated deterministic computation should not need to enter that working memory in full when Git, the filesystem, ripgrep, tests, or a valid cached result can establish the required evidence directly.
-
-KRn therefore tries to move deterministic work downward:
+`krn map --focus "where is the exec cache key computed" --tokens 300`, run on this repository:
 
 ```text
-agent reasoning
-      ↓
-minimum evidence
-      ↓
-deterministic work
-      ↓
-explicit dependencies
-      ↓
-verified cache
-      ↓
-safe reuse
+project: A small, local CLI that gives coding agents a ranked map of your repository and takes ...
+layout: eval/results/(16) eval/fixture/(7) internal/eval/(7) docs/(5) ...
+
+internal/exec/exec.go:
+  19│ const cacheSchema = "2"
+  21│ type cacheRecord struct
+  77│ func cacheKeyAtRoot(root string, command []string, inputs []string) (string, map[string]string, error)
+  177│ func validCacheRecord(rec cacheRecord, key string, command, inputs []string, fps map[string]string) bool
+internal/workspace/repo.go:
+  29│ func Discover() (Repo, error)
+  ...
 ```
 
-This does not make the agent passive and does not establish that KRn reduces model tokens or reasoning.
+The map lists function and type signatures only. Files are ranked toward the question using PageRank over the references between them, and the output is cut to a token budget. It supports JS/TS/TSX, Python, and Go.
 
-KRn provides small, recoverable interfaces for deterministic work that can be reconstructed, measured, verified, or safely reused.
-
-## How it works
+`krn find cache key fingerprint` searches by plain words and returns the best-matching files, with the matching lines in context:
 
 ```text
-TASK                         user asks the agent to do work
-  |
-  v
-RECONSTRUCT                  rebuild repo facts from Git, files, and state
-  |
-  v
-MINIMUM EVIDENCE             retrieve only the evidence needed now
-  |
-  +---------------------------+
-  |                           |
-  v                           v
-DETERMINISTIC WORK       AGENT REASONING
-tools prove facts        model judges, plans, and synthesizes
-  |                           |
-  +-------------+-------------+
-                |
-                v
-              VERIFY          run checks or reject uncertain evidence
-                |
-                v
-              RECORD          save local evidence from verified work
-                |
-       +--------+--------+
-       |                 |
-       v                 v
-     CACHE             METRICS
- reusable results      local measurements
-       |
-       v
- VERIFIED REUSE               reuse only while command and inputs still match
+terms: cache, key, fingerprint (271 matching lines)
+
+internal/exec/exec.go
+> 77  func cacheKeyAtRoot(root string, command []string, inputs []string) (string, map[string]string, error) {
+  78  	h := sha256.New()
+  ...
+full_log: .git/krn/runs/20260926T153058Z-find.log
 ```
 
-The main path is conservative: KRn reconstructs what it can, gathers bounded evidence, lets deterministic tools and agent reasoning meet at verification, and records only verified work. The reuse path is narrower: cached results are reused only while their explicit dependencies still match.
-
-* `context` reconstructs Git root, branch, commit, changed paths, detected ecosystems, and saved task state.
-* `find` turns plain words or identifiers into ripgrep searches, ranks files, returns a bounded file/snippet projection, and saves the full search output for recovery.
-* `map` parses source files with tree-sitter and prints a ranked, signatures-only repository map fitted to a token budget.
-* `code` applies ast-grep structural edits whose pattern must match exactly once.
-* `verify` discovers safe project-native checks from `.kern/config.json`, `package.json`, Go, Cargo, or pytest. Unknown projects remain `unknown`; KRn does not invent a command.
-* `exec` runs structured local commands, bounds output shown to the caller, records metrics, and can cache executions only when explicit input dependencies are supplied.
-* Cached executions are reused only when their command, repository provenance, schema, declared dependencies, dependency fingerprints, metadata, and result integrity remain valid.
-
-The implementation fails open around uncertain reconstruction or reuse: unavailable, malformed, stale, tampered, or mismatched evidence is rejected rather than treated as valid.
+The agent sees a short result, and the full output is saved to a log it can open if it needs more.
 
 ## Commands
 
-```text
-krn context [--json]
-krn find QUERY... [--json] [--max-files N] [--budget BYTES] [--regex]
-krn map [--tokens N] [--focus TEXT]
-krn code read|replace|insert-before|insert-after|remove --file PATH --pattern PATTERN [--lang LANG] [--content TEXT|--content-file PATH]
-krn verify [--level fast|full] [--json]
-krn state show
-krn state set objective TEXT
-krn state add constraint|proven|open|negative TEXT
-krn state clear
-krn exec [--verified] [--cache --input PATH ...] -- COMMAND ARGS...
-krn eval --task PATH --verify COMMAND --model MODEL --reasoning-effort EFFORT [--codex PATH] [--output DIR] [--json]
-krn eval-suite [--manifest PATH] --model MODEL --reasoning-effort EFFORT [--codex PATH] [--output DIR] [--freeze-only] [--json]
-krn eval-pi --model MODEL [--provider NAME] [--manifest PATH] [--variants none,A,AB,ABC,C,T] [--seeds N] [--tasks IDS]
-krn eval-claude [--model MODEL] [--manifest PATH] [--variants none,policy,map,tree] [--seeds N] [--tasks IDS] [--total-budget-usd N]
-            [--agent-dir DIR] [--extension PATH] [--krn PATH] [--workdir DIR] [--timeout DURATION] [--output DIR]
-krn integrate codex|remove-codex|claude|remove-claude
-krn doctor
-krn uninstall
-krn version
-```
+| command | does |
+|---|---|
+| `krn map [--focus TEXT] [--tokens N]` | ranked, signatures-only repository map |
+| `krn find WORDS... [--max-files N]` | plain-word search, ranked, with context (`--regex` for raw patterns) |
+| `krn context` | repository root, branch, commit, changed files, detected ecosystems, saved task state |
+| `krn code read\|replace\|insert-before\|insert-after\|remove` | structural edit through ast-grep; the pattern must match exactly once, and the file is written only if the result still parses |
+| `krn verify [--level fast\|full]` | runs the project's own checks (Go, npm, Cargo, pytest, or `.kern/config.json`); reports `unknown` if it finds none, rather than inventing a command |
+| `krn exec [--cache --input PATH...] -- CMD` | runs a command with bounded output; with `--cache`, reuses the last result while the declared inputs are unchanged |
+| `krn state show\|set\|add\|clear` | a few durable task facts: objective, constraints, proven facts, open questions, dead ends |
+| `krn eval-pi`, `krn eval-claude` | benchmark harness: runs a task manifest through pi or Claude Code, variant by variant, and grades the answers |
+| `krn integrate`, `krn doctor`, `krn uninstall` | add or remove the agent integrations; check the setup |
 
-Details: [docs/commands.md](docs/commands.md). pi specifics: [docs/pi.md](docs/pi.md).
+Most commands take `--json`. Full flags and semantics are in [docs/commands.md](docs/commands.md). For how `map`, `find` and the pi extension work, see [docs/pi.md](docs/pi.md).
+
+## Design rules
+
+* **Deterministic work only.** KRn does only what a program can do exactly. Judgement stays with the model.
+* **Small output, full evidence on disk.** What the agent sees is bounded; the full output goes to `.git/krn/runs/`.
+* **Fail open.** Outside Git, or on a parse error or a stale or tampered cache record, KRn steps aside instead of guessing.
+* **Don't store what can be rebuilt.** Git and the files are the source of truth. KRn stores only task facts that can't be reconstructed, plus cache records that are checked before every reuse.
+* **Measure before shipping.** A feature stays only if it raises correct answers per minute in the benchmark. That is why the pi extension enables only the map. Bounded search output and a `find_code` tool are available but switched off, because neither helped.
+
+It deliberately has no daemon, embeddings, vector database, MCP server, cloud service, or telemetry. The reasoning is in [docs/design.md](docs/design.md).
+
+## Limits
+
+* The benchmark is small: 12 tasks, one local model and one Claude model. Two of the three task repositories are private.
+* On Claude Code with Haiku, the routing policy added cost without a measured gain. Whether it helps larger models or harder tasks is unknown.
+* The map shows where functions start, not which line inside them does the work, so agents can still cite the wrong line.
+* `exec --cache` is only as safe as the inputs you declare. KRn checks that they haven't changed, but it can't know about inputs you left out.
+
+## Documentation
+
+| | |
+|---|---|
+| [docs/benchmarks.md](docs/benchmarks.md) | method, every run, confidence intervals, dropped experiments, Claude Code results, cache benchmark |
+| [docs/pi.md](docs/pi.md) | how `find` and `map` work, the pi extension and its settings, using pi with a local model |
+| [docs/commands.md](docs/commands.md) | installation, command reference, routing policy, cache semantics, structural edits, Codex A/B harness |
+| [docs/design.md](docs/design.md) | why and how it works, memory model, storage and privacy, non-goals, related work, source layout |
+| [docs/evidence.md](docs/evidence.md) | the research behind each design decision, and what is and isn't proven |
+| [docs/plans/](docs/plans/) | design plans and the [investigation log](docs/plans/2026-09-26-pi-lean-investigation.md) |
 
 ## Uninstall
 
@@ -170,60 +130,11 @@ Details: [docs/commands.md](docs/commands.md). pi specifics: [docs/pi.md](docs/p
 krn uninstall
 ```
 
-This removes KRn's managed blocks from the Codex `AGENTS.md` and the Claude Code `CLAUDE.md`, and the pi extension directory `~/.pi/agent/extensions/krn` when its `index.ts` is KRn's.
-
-When invoked from the installed `~/.local/bin/krn`, it also removes that binary.
-
-It does not remove repository-private `.git/krn` records.
-
-## Documentation
-
-| doc | contents |
-|---|---|
-| [docs/benchmarks.md](docs/benchmarks.md) | method, every run and dropped experiment, pooled intervals, Claude Code results, cache benchmark |
-| [docs/pi.md](docs/pi.md) | `krn find`, `krn map`, the pi extension, its settings, and `krn eval-pi`/`eval-claude` |
-| [docs/commands.md](docs/commands.md) | integration policy, cache semantics, structural edits, Codex A/B harness |
-| [docs/design.md](docs/design.md) | memory model, storage and privacy, non-goals, limits, related work |
-| [docs/evidence.md](docs/evidence.md) | research behind the architecture and what is and is not established |
-| [docs/plans/](docs/plans/) | design plans and the [investigation log](docs/plans/2026-09-26-pi-lean-investigation.md) of the evaluations |
-| [eval/results/](eval/results/) | raw results for every run |
-
+This removes the managed blocks from `CLAUDE.md` and `AGENTS.md`, the pi extension, and the installed binary. Per-repository data in `.git/krn/` stays; delete it yourself if you want it gone.
 
 ## Contributing
 
-Keep changes small, deterministic, inspectable, and falsifiable.
-
-The source tree is organized by feature: each command lives in its own package, so a change to one command only requires reading that package.
-
-```text
-cmd/krn/              command dispatch and end-to-end tests of the built binary
-internal/workspace/   shared core: repository discovery, .git/krn storage, bounded output, metrics
-internal/context/     krn context
-internal/find/        krn find (ranked natural-language search)
-internal/repomap/     krn map (tree-sitter tags + personalized PageRank)
-internal/code/        krn code (ast-grep structural edits)
-internal/verify/      krn verify
-internal/state/       krn state
-internal/exec/        krn exec and the explicit-input cache
-internal/eval/        krn eval (A/B harness), krn eval-suite, krn eval-pi, krn eval-claude
-eval/                 eval task manifests and fixture repository
-integrations/pi/      pi extension (find_code tool, first-turn map, bounded search output)
-internal/integrate/   Codex/Claude Code routing policy, krn integrate, krn uninstall
-internal/doctor/      krn doctor
-internal/testutil/    helpers shared by tests
-```
-
-Feature packages depend on `workspace`; `context` also reads `state`, and `eval` uses the policy from `integrate`.
-
-Add or update tests for behavior.
-
-Run the project checks.
-
-Document only capabilities that source, tests, measurements, or explicitly cited external evidence establish.
-
-Do not convert architectural hypotheses into product claims.
-
-Additional complexity requires a reproducible workload showing that it improves the relevant frontier.
+Each command is its own package under `internal/`, so changing one command means reading one package. Add tests with behavior changes, run `go test ./...`, and back any new feature or claim with a measurement. The source layout is described in [docs/design.md](docs/design.md#source-layout-and-contributing).
 
 ## License
 

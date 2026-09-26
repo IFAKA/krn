@@ -4,6 +4,25 @@ Details behind the command list in the README: agent integration policy, cache s
 
 [← README](../README.md)
 
+## Installation and integration
+
+The repository currently ships a source-based installer, not a release binary or a verified public `curl | sh` endpoint.
+
+```sh
+git clone https://github.com/IFAKA/krn.git
+cd krn
+./install.sh
+```
+
+`install.sh` requires Go 1.24+, builds KRn, installs it at `~/.local/bin/krn`, installs the required `ast-grep` CLI when it is missing, and adds a small managed routing policy to `$CODEX_HOME/AGENTS.md` (default `~/.codex/AGENTS.md`). When Claude Code is detected (`claude` on `PATH` or an existing `$CLAUDE_CONFIG_DIR`/`~/.claude` directory), it also adds the same policy to `$CLAUDE_CONFIG_DIR/CLAUDE.md` (default `~/.claude/CLAUDE.md`). When pi is detected (`pi` on `PATH` or an existing `$PI_CODING_AGENT_DIR`/`~/.pi/agent` directory), it copies the pi extension to `extensions/krn/index.ts` there. It tries npm, Cargo, and pip (installing into `~/.local` without sudo), then falls back to Homebrew, which installs into its own prefix. If either command is not on `PATH`, add `~/.local/bin` to it.
+
+```sh
+cd any-git-project
+codex    # or: claude, or: pi
+```
+
+There is no `krn init`. The integration is global: an instruction block per agent for Codex and Claude Code (`krn integrate codex|claude`), and an extension for pi (copied by `install.sh`). The commands operate on the Git repository containing the current directory. pi's model and provider configuration is pi's own and outside KRn; see [Local models with pi](pi.md).
+
 ## Commands
 
 ```text

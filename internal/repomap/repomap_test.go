@@ -109,6 +109,11 @@ func TestClipHeaderKeepsWordsAndSeparator(t *testing.T) {
 		if got != "" && !strings.HasPrefix(header, strings.TrimSuffix(got, "\n\n")) {
 			t.Fatalf("max %d: not a prefix: %q", max, got)
 		}
+		for _, line := range strings.Split(strings.TrimSpace(got), "\n") {
+			if line != "" && !strings.Contains(line, " ") {
+				t.Fatalf("max %d: bare label %q in %q", max, line, got)
+			}
+		}
 	}
 	if got := clipHeader(header, 40); strings.Contains(got, "internal/eval/(5) i") || strings.Contains(got, "inte\n") {
 		t.Fatalf("cut mid-word: %q", got)

@@ -488,7 +488,8 @@ func renderHeader(root string, paths []string) string {
 }
 
 // clipHeader shortens header to at most max bytes at a word boundary, keeping the
-// blank line that separates it from the definitions.
+// blank line that separates it from the definitions. A line left with only its
+// label ("layout:") is dropped.
 func clipHeader(header string, max int) string {
 	if len(header) <= max {
 		return header
@@ -498,10 +499,19 @@ func clipHeader(header string, max int) string {
 		return ""
 	}
 	cut := header[:max-len(sep)]
-	if i := strings.LastIndexAny(cut, " \n"); i > 0 {
-		cut = cut[:i]
+	i := strings.LastIndexAny(cut, " \n")
+	if i <= 0 {
+		return ""
 	}
-	return strings.TrimRight(cut, " \n") + sep
+	cut = strings.TrimRight(cut[:i], " \n")
+	start := strings.LastIndex(cut, "\n") + 1
+	if !strings.Contains(cut[start:], " ") {
+		cut = strings.TrimRight(cut[:start], "\n")
+	}
+	if cut == "" {
+		return ""
+	}
+	return cut + sep
 }
 
 func projectAbout(root string) string {

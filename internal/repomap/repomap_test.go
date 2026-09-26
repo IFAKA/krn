@@ -75,6 +75,15 @@ func TestMapRanksFocusAndFitsBudget(t *testing.T) {
 	}
 }
 
+func TestMapPutsNamedDefinitionAboveItsCallees(t *testing.T) {
+	r := fixture(t)
+	out := mustBuild(t, r, "how does renderRest draw the rest view", 200)
+	vi, ti := strings.Index(out, "src/view.js:"), strings.Index(out, "src/timers.js:")
+	if vi < 0 || (ti >= 0 && ti < vi) {
+		t.Fatalf("view.js (defines renderRest) should rank above timers.js (its callees):\n%s", out)
+	}
+}
+
 func TestMapIsDeterministicAndCached(t *testing.T) {
 	r := fixture(t)
 	a := mustBuild(t, r, "rest timer", 300)

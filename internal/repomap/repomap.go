@@ -240,6 +240,16 @@ func rank(files []fileTags, focusTerms []string, dirty map[string]bool) []def {
 		return false
 	}
 
+	focusHits := func(s string) int {
+		seen := map[string]bool{}
+		for _, part := range append(find.Terms(s), s) {
+			if p := strings.ToLower(part); focus[p] {
+				seen[p] = true
+			}
+		}
+		return len(seen)
+	}
+
 	index := map[string]int{}
 	var nodes []string
 	for _, f := range files {
@@ -345,10 +355,12 @@ func rank(files []fileTags, focusTerms []string, dirty map[string]bool) []def {
 			continue
 		}
 		for name, line := range names {
-			s := scores[[2]string{file, name}] + 0.02*pr[index[file]]
-			if matchesFocus(name) {
-				s += 0.05 * pr[index[file]]
-			}
+			// A definition named by the request outranks what its file merely calls: each
+			// distinct focus term in the name adds a share of the file's direct relevance
+			// (its personalization), which PageRank would otherwise pass on to its callees.
+			i := index[file]
+			s := scores[[2]string{file, name}] + 0.02*pr[i]
+			s += 0.5 * float64(focusHits(name)) * math.Max(pr[i], pers[i])
 			defs = append(defs, def{file, name, line, s})
 		}
 	}

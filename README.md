@@ -64,18 +64,22 @@ Variants are parts of the [pi extension](#local-models-with-pi): A bounds search
 | A+B+C | 29/36 (81%) | 1.64 | 23.7 s | 29.5 s | 7.9 | 6,968 | 1,069 |
 | C ² | 31/36 (86%) | 1.61 | 28.7 s | 32.0 s | 7.7 | 8,042 | 1,094 |
 | B+C ² | 30/36 (83%) | 1.41 | 27.7 s | 35.5 s | 7.6 | 7,893 | 1,117 |
+| none ³ | 15/36 (42%) | 1.00 | 16.3 s | 25.0 s | 6.3 | 6,340 | 856 |
+| C ³ | 29/36 (81%) | 1.50 | 27.6 s | 32.3 s | 7.1 | 7,397 | 981 |
 
 ² Second run, same tasks and seeds, about 40 minutes later.
+³ Third run, after the map started ranking a definition named by the prompt above the code it calls. The maps for the benchmark prompts barely changed, so this run mainly measures noise: C moved by two answers, the baseline by one.
 
 What this shows, and does not:
 
 * The map (C) accounts for the gain: C alone matched A+B+C, so only C is on by default. The model called `find_code` in about one run in ten when it was offered; bounding (A) alone changed nothing.
 * Without KRn, 20 of the 27 localization runs answered after zero tool calls and all 20 were wrong (invented files or functions); all 7 runs that used a tool were correct. The map puts evidence in context without the model having to decide to search.
+* Most remaining map-variant failures are fast answers taken from the map alone when the map left out the right file (for example a descriptive question about sync conflicts whose answer is `mergeChanges`). The map does not say what it omitted, and the model does not search further.
 * The three edit tasks were solved in nearly every variant; the difference is in localization.
 * The median run is slower with the map (more correct answers take more turns reading code), but correct answers per minute rise from 0.97 to about 1.6.
 * One model, one machine, 36 runs per variant. A gap of three or four correct answers is within seed noise. Two of the three source repositories are private, so the exact manifest is not reproducible elsewhere; the harness is.
 
-Raw results and per-task tables: [`eval/results/2026-09-26-pi-local/`](eval/results/2026-09-26-pi-local/). Reproduce with your own manifest:
+Raw results and per-task tables: [`eval/results/2026-09-26-pi-local/`](eval/results/2026-09-26-pi-local/) and [`eval/results/2026-09-26-pi-local-rank/`](eval/results/2026-09-26-pi-local-rank/). Reproduce with your own manifest:
 
 ```sh
 krn eval-pi --model MODEL --manifest eval/pi-local-manifest.json --variants none,A,AB,ABC --seeds 3
@@ -274,7 +278,7 @@ The verifier is run after Codex exits in each fresh checkout. A run is verified 
 
 `krn find` takes plain words or identifiers. It splits identifiers (camelCase, snake_case), drops stopwords, weights terms by rarity, prefers definition lines and files that match several terms, and prints at most `--max-files` files (default 5), each with up to three hits: line number, enclosing symbol, and two lines of context. Output stays under `--budget` bytes (default 2400). `--regex` restores the old raw-pattern behaviour.
 
-`krn map` prints a signatures-only repository map for JS/TS/TSX, Python, and Go: tree-sitter definitions and references, a reference graph ranked with personalized PageRank toward `--focus` terms and dirty files, fitted to `--tokens` (default 800). It starts with a short header (the README's first paragraph or the manifest description, and the top-level directory layout) that takes at most a third of the budget and is cut at a word boundary. Tags are cached in `.git/krn/cache/map/` by blob hash.
+`krn map` prints a signatures-only repository map for JS/TS/TSX, Python, and Go: tree-sitter definitions and references, a reference graph ranked with personalized PageRank toward `--focus` terms and dirty files, fitted to `--tokens` (default 800). PageRank passes a file's rank to the definitions it references, so a definition whose name contains focus terms also gets a boost from its own file's relevance and is listed above the code it calls. It starts with a short header (the README's first paragraph or the manifest description, and the top-level directory layout) that takes at most a third of the budget and is cut at a word boundary; a line cut down to its bare label is dropped. Tags are cached in `.git/krn/cache/map/` by blob hash.
 
 `integrations/pi/krn.ts` is a [pi](https://github.com/earendil-works/pi) extension. `install.sh` copies it to `~/.pi/agent/extensions/krn/index.ts` when pi is detected; `krn uninstall` removes it. It has three parts. Only the map is on by default; set a variable to `1` to enable a part or `0` to disable it:
 

@@ -155,7 +155,7 @@ Raw results and per-task tables:
 * run 6 (file-list baseline): [`eval/results/2026-09-26-baselines-pi/`](eval/results/2026-09-26-baselines-pi/)
 * Claude Code: [`eval/results/2026-09-26-baselines-claude/`](eval/results/2026-09-26-baselines-claude/)
 
-Every run is listed there, including those that did not ship. Reproduce with your own manifest:
+Every run is listed there, including those that did not ship. The reasoning behind each decision, the dropped designs, and open questions are in [`docs/plans/2026-09-26-pi-lean-investigation.md`](docs/plans/2026-09-26-pi-lean-investigation.md). Reproduce with your own manifest:
 
 ```sh
 krn eval-pi --model MODEL --manifest eval/pi-local-manifest.json --variants none,C,T --seeds 3

@@ -16,7 +16,13 @@ Codex / Claude Code / pi      agent / harness
 repository + existing tools
 ```
 
-Measured so far, on one local model and one machine: a first-turn repository map raised pi's localization accuracy from 24% to 80% (13/54 → 43/54, pooled over two runs each) and correct answers per minute from about 1.0 to 1.55. Features that did not beat it were left off or dropped, and those runs are published too. See [Benchmarks](#benchmarks) for the method, noise, and limits. The agent-level effect on Codex and Claude Code has not been measured.
+Measured so far (method, noise, and limits in [Benchmarks](#benchmarks)):
+
+* **pi with a local 30B model:** a repository map on the first prompt raised correct answers from 42% to 85% (pooled over three runs). A plain `git ls-files` list did as well on correctness; KRn's ranked map reached it about 40% faster.
+* **Claude Code with Haiku 4.5:** vanilla Claude Code already answered 35 of 36 tasks. The KRn routing policy that `install.sh` adds made no measurable difference to correctness and cost about 15% more per task.
+* **Not measured:** Codex, Claude Code with larger models, and real bug-fix or feature work.
+
+Features that did not help were left off or dropped, and those runs are published too.
 
 The engineering thesis is:
 
@@ -47,7 +53,17 @@ There is no `krn init`. The integration is global: an instruction block per agen
 
 ## Benchmarks
 
-Two kinds of measurement exist. Neither covers Codex or Claude Code end to end: whether the instruction-based integration changes their correctness, tokens, or wall time has not been measured.
+### At a glance
+
+| if you use | measured | correct (of 36) | speed and cost | verdict |
+|---|---|---|---|---|
+| pi + local model (30B, M4 Pro) | no KRn, KRn map, plain file list (run 6) | 14 / 32 / 33 | correct per minute 0.94 / 1.50 / 1.07 | Use the map. Most of the gain comes from giving the model any map; KRn's ranking makes it about 40% faster than a file list. |
+| Claude Code + Haiku 4.5 | no KRn, KRn policy, KRn map, plain file list | 35 / 36 / 33 / 33 | $ per task 0.032 / 0.037 / 0.023 / 0.028 | No correctness gain; vanilla is near the ceiling on these tasks. The installed policy costs about 15% more. The map was fastest and cheapest but is not part of the Claude Code integration. |
+| Claude Code with Sonnet or Opus, Codex | not measured | | | unknown |
+| bug fixes and features | 3 small edit tasks, solved in nearly every variant | | | unknown |
+| `krn exec --cache` | correct reuse and invalidation (`benchmark.sh`) | | time saved not measured | mechanism only |
+
+Differences of about five correct answers or fewer out of 36 are noise at this size (see below). Other tools (Aider's repo map, LSP or MCP code-navigation servers) were not run; the plain file list stands in for "any map". Two of the three task repositories are private, so the numbers cannot be reproduced exactly elsewhere; the harness can.
 
 ### Local model with pi: correctness per minute
 
@@ -82,20 +98,25 @@ for each seed, task, variant ──> fresh detached clone ──> pi -p --mode j
 | 3 | C | 29/36 (81%) | 1.50 | 27.6 s | 32.3 s | 7.1 | 7,397 | 981 |
 | 4 ✗ | C + coverage note | 29/36 (81%) | 0.99 | 31.9 s | 48.6 s | 10.1 | 8,808 | 1,381 |
 | 5 ✗ | C + gated coverage note | 34/36 (94%) | 1.63 | 29.9 s | 34.7 s | 9.1 | 8,485 | 1,161 |
+| 6 | none | 14/36 (39%) | 0.94 | 17.7 s | 24.7 s | 6.4 | 5,546 | 881 |
+| 6 | C | 32/36 (89%) | 1.50 | 28.1 s | 35.7 s | 8.6 | 8,375 | 1,220 |
+| 6 | T (file list, no KRn) | 33/36 (92%) | 1.07 | 45.8 s | 51.2 s | 13.5 | 10,838 | 1,643 |
 
-Run 1 is the ablation. Run 2 repeated it about 40 minutes later with C alone and B+C. Run 3 came after the map began ranking a definition named by the prompt above the code it calls; the benchmark prompts' maps barely changed, so it mostly measures noise. Runs 4 and 5 (✗) tested a line that lists question words the map does not show; neither shipped (see below).
+Run 1 is the ablation. Run 2 repeated it about 40 minutes later with C alone and B+C. Run 3 came after the map began ranking a definition named by the prompt above the code it calls; the benchmark prompts' maps barely changed, so it mostly measures noise. Runs 4 and 5 (✗) tested a line that lists question words the map does not show; neither shipped (see below). Run 6 added a baseline without KRn, T: the first prompt gets `git ls-files` cut to the map's byte budget, delivered the same way ([`eval/baselines/pi-tree.ts`](eval/baselines/pi-tree.ts)).
 
-Pooled over the two baseline runs and the two map-only runs whose code is on `main` (runs 2 and 3), with 95% Wilson intervals:
+Pooled over the three baseline runs (1, 3, 6) and the three map-only runs whose code is on `main` (2, 3, 6), with 95% Wilson intervals:
 
 | | all tasks | localization only | correct/min |
 |---|---:|---:|---:|
-| none | 31/72 (43%, 32–55%) | 13/54 (24%, 15–37%) | 0.99 |
-| C (map) | 60/72 (83%, 73–90%) | 43/54 (80%, 67–88%) | 1.55 |
+| none | 45/108 (42%, 33–51%) | 18/81 (22%, 15–32%) | 0.97 |
+| C (map) | 92/108 (85%, 77–91%) | 66/81 (81%, 72–88%) | 1.53 |
+| T (file list), run 6 only | 33/36 (92%, 78–97%) | 24/27 (89%, 72–96%) | 1.07 |
 
 What this shows, and does not:
 
-* The map (C) accounts for the gain: C alone matched A+B+C, so only C is on by default. The model called `find_code` in about one run in ten when it was offered; bounding (A) alone changed nothing.
-* The localization intervals do not overlap. Without KRn, 40 of the 54 localization runs answered after zero tool calls, and all 40 were wrong (invented files or functions); 13 of the other 14 were correct. The map puts evidence in context without the model having to decide to search.
+* Of KRn's three parts, the map (C) accounts for the gain: C alone matched A+B+C, so only C is on by default. The model called `find_code` in about one run in ten when it was offered; bounding (A) alone changed nothing.
+* The localization intervals for none and C do not overlap. Without any map, 40 of 54 localization runs in runs 1 and 3 answered after zero tool calls, and all 40 were wrong (invented files or functions); 13 of the other 14 were correct. A map puts real names in context, so the model searches instead of guessing.
+* Any map does that. The plain file list (T) scored 33/36 to the ranked map's 32/36, within noise. It took more turns, since a list of paths still has to be opened and read, so the ranked map produced about 40% more correct answers per minute (1.50 to 1.07) and used about 40% fewer input tokens. KRn's ranking buys speed on this device, not correctness.
 * Noise is large at this size. The map-only variant scored 31/36 and 29/36 in runs 2 and 3 with nearly identical maps. Run 5 scored 34/36 to run 4's 29/36, although only three tasks' inputs differed between them. Treat any difference of about five correct answers or less as noise.
 * The three edit tasks were solved in nearly every variant; the difference is in localization.
 * The median run is slower with the map (more correct answers take more turns reading code), but correct answers per minute rise from about 1.0 to about 1.55.
@@ -109,17 +130,36 @@ Negative result: the coverage note. Most remaining map failures are fast answers
 
 A map cannot report the omission of code the question never names, so the feature was dropped.
 
+### Claude Code with Haiku 4.5
+
+`krn eval-claude`, same 12 tasks, 3 seeds, Claude Code 2.1.283 with `claude-haiku-4-5-20251001`. Every run uses `claude -p --safe-mode`, so the user's CLAUDE.md, hooks, plugins, and MCP servers are not loaded; each variant adds only its own text to the system prompt. It ran alongside run 6.
+
+| variant | correct | accuracy (95% CI) | correct/min | median wall | mean turns | mean uncached input tok | mean cached input tok | $ per task (list price) | krn calls per task |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| none | 35/36 | 97% (86–100%) | 3.56 | 15.3 s | 5.8 | 7,759 | 88,070 | 0.032 | 0 |
+| policy (installed KRn routing policy) | 36/36 | 100% (90–100%) | 3.36 | 16.4 s | 6.0 | 9,540 | 113,602 | 0.037 | 2.0 |
+| map (`krn map`, first prompt) | 33/36 | 92% (78–97%) | 4.52 | 11.2 s | 3.7 | 6,406 | 49,362 | 0.023 | 0 |
+| tree (file list, no KRn) | 33/36 | 92% (78–97%) | 3.92 | 12.3 s | 5.2 | 7,454 | 70,515 | 0.028 | 0 |
+
+* Vanilla Claude Code on Haiku 4.5 solves nearly all of these tasks, so there is no room to show a correctness gain. Unlike the local model, it searched before answering in every run.
+* The policy is what `install.sh` adds for Claude Code today. The model followed it (about two `krn` calls per task), which added turns and about 15% cost without changing correctness.
+* The map cut turns by a third and cost by about 30%. Its three misses were all on `wk-rest`: the model read the timer code and stopped before finding `task-factory.js`, which sets the per-exercise rest time. The file-list runs missed the same task the same way, after more searching. With 36 runs, 33 vs 35 is within noise.
+* These tasks are too easy to separate the variants on correctness for this model. Harder tasks and larger models remain unmeasured.
+
 Raw results and per-task tables:
 
 * runs 1–2: [`eval/results/2026-09-26-pi-local/`](eval/results/2026-09-26-pi-local/)
 * run 3: [`eval/results/2026-09-26-pi-local-rank/`](eval/results/2026-09-26-pi-local-rank/)
 * run 4: [`eval/results/2026-09-26-pi-local-coverage/`](eval/results/2026-09-26-pi-local-coverage/)
 * run 5: [`eval/results/2026-09-26-pi-local-coverage-gate/`](eval/results/2026-09-26-pi-local-coverage-gate/)
+* run 6 (file-list baseline): [`eval/results/2026-09-26-baselines-pi/`](eval/results/2026-09-26-baselines-pi/)
+* Claude Code: [`eval/results/2026-09-26-baselines-claude/`](eval/results/2026-09-26-baselines-claude/)
 
 Every run is listed there, including those that did not ship. Reproduce with your own manifest:
 
 ```sh
-krn eval-pi --model MODEL --manifest eval/pi-local-manifest.json --variants none,A,AB,ABC --seeds 3
+krn eval-pi --model MODEL --manifest eval/pi-local-manifest.json --variants none,C,T --seeds 3
+krn eval-claude --model claude-haiku-4-5-20251001 --manifest eval/pi-local-manifest.json --seeds 3
 ```
 
 ### Deterministic execution cache
@@ -254,7 +294,8 @@ krn state clear
 krn exec [--verified] [--cache --input PATH ...] -- COMMAND ARGS...
 krn eval --task PATH --verify COMMAND --model MODEL --reasoning-effort EFFORT [--codex PATH] [--output DIR] [--json]
 krn eval-suite [--manifest PATH] --model MODEL --reasoning-effort EFFORT [--codex PATH] [--output DIR] [--freeze-only] [--json]
-krn eval-pi --model MODEL [--provider NAME] [--manifest PATH] [--variants none,A,AB,ABC] [--seeds N] [--tasks IDS]
+krn eval-pi --model MODEL [--provider NAME] [--manifest PATH] [--variants none,A,AB,ABC,C,T] [--seeds N] [--tasks IDS]
+krn eval-claude [--model MODEL] [--manifest PATH] [--variants none,policy,map,tree] [--seeds N] [--tasks IDS] [--total-budget-usd N]
             [--agent-dir DIR] [--extension PATH] [--krn PATH] [--workdir DIR] [--timeout DURATION] [--output DIR]
 krn integrate codex|remove-codex|claude|remove-claude
 krn doctor
@@ -294,7 +335,7 @@ This boundary is intentional: the model decides the structural pattern, content,
 
 ### End-to-end A/B evaluation
 
-`krn eval` is a separate experiment from `benchmark.sh`. It currently drives Codex only; there is no Claude Code eval harness yet. It evaluates the same task twice from fresh clones of the same committed `HEAD`:
+`krn eval` is a separate experiment from `benchmark.sh`. It drives Codex; `krn eval-claude` runs the pi task manifest through Claude Code (see [Benchmarks](#claude-code-with-haiku-45)). `krn eval` evaluates the same task twice from fresh clones of the same committed `HEAD`:
 
 * A: Codex alone, with isolated Codex state.
 * B: the same Codex invocation plus the current KRn routing policy in isolated Codex instructions.
@@ -340,9 +381,9 @@ optional: find_code tool (B) ── krn find       bash search output > 6000 byt
 
 Every part fails open outside a Git repository or when `krn` errors. Further variables: `KRN_PI_MAP_TOKENS` (map budget, default 800), `KRN_PI_BOUND_BYTES` (bounding threshold, default 6000), and `KRN_BIN` (the `krn` executable, default `krn` on `PATH`).
 
-`krn eval-pi` runs pi non-interactively (`pi -p --mode json --no-session --no-extensions`, plus `-e` with the extension for KRn variants) on fresh detached clones, once per variant, task, and seed. It grades the final answer against regexes and optional verify commands, and writes `results.jsonl` and `report.md`.
+`krn eval-pi` runs pi non-interactively (`pi -p --mode json --no-session --no-extensions`, plus `-e` with the extension for KRn variants) on fresh detached clones, once per variant, task, and seed. It grades the final answer against regexes and optional verify commands, and writes `results.jsonl` and `report.md`. Variant T is a baseline without KRn: [`eval/baselines/pi-tree.ts`](eval/baselines/pi-tree.ts) gives the first prompt a plain `git ls-files` list at the map's byte budget. `krn eval-claude` runs the same manifest through `claude -p --safe-mode` (Haiku 4.5 by default) and adds the variant's text with `--append-system-prompt`; it stops starting runs once the reported cost reaches `--total-budget-usd` (default 10).
 
-Measured results are in [Benchmarks](#benchmarks). The map alone matched all three parts there, so it is the only default. The hardest task was solved in only 4 of 18 map runs: asked where a rest timer's end time is computed, the model usually cited the first line of `startRest` instead of the assignment three lines below it, and the default constant instead of the per-exercise value. Signatures show where a function starts, not which line inside it does the work; this is a known weakness in precise line citation.
+Measured results are in [Benchmarks](#benchmarks). The map alone matched all three parts there, so it is the only default. A plain file list matched the map's correctness but took about 40% longer per correct answer. The hardest task was solved in only 4 of 18 map runs: asked where a rest timer's end time is computed, the model usually cited the first line of `startRest` instead of the assignment three lines below it, and the default constant instead of the per-exercise value. Signatures show where a function starts, not which line inside it does the work; this is a known weakness in precise line citation.
 
 To use it interactively, pi's `models.json` needs the served model and `settings.json` needs it as `defaultModel` (the eval passes `--provider`/`--model` and an isolated `PI_CODING_AGENT_DIR` instead). With `"reasoning": false` and a `contextWindow` no larger than the server's limit, `pi` in any Git repository gets the map on its first prompt. When scripting `pi -p`, redirect stdin (`pi -p '...' </dev/null`): pi reads piped stdin as extra prompt input and waits for it to close. `krn eval-pi` runs pi with stdin on the null device.
 
@@ -458,7 +499,7 @@ tampered/mismatched record   → cache miss
 
 This establishes command-execution reuse under the declared dependency model.
 
-It does not establish model-level efficiency. The one agent-level measurement is the pi evaluation in [Benchmarks](#benchmarks): one local model on one machine, where the first-turn map raised localization correctness (24% → 80%, pooled 95% intervals 15–37% and 67–88%) and correct answers per minute (about 1.0 → 1.55).
+It does not establish model-level efficiency. The agent-level measurements are in [Benchmarks](#benchmarks). With pi and one local model, a first-turn map raised localization correctness from 22% to 81% (pooled 95% intervals 15–32% and 72–88%). A plain file list matched that correctness, and KRn's ranked map reached it about 40% faster. With Claude Code on Haiku 4.5, no variant changed correctness measurably, and the installed routing policy cost about 15% more.
 
 ### KRn-specific hypotheses
 
@@ -466,7 +507,7 @@ The broader hypothesis remains unproven:
 
 > Moving deterministic or reconstructable work outside repeated model-driven execution may reduce the cognition or context required per verified useful coding outcome.
 
-Outside that single local pi evaluation, current measurements do **not** establish:
+Outside the local pi evaluation, current measurements do **not** establish:
 
 * fewer agent tokens
 * less agent reasoning
@@ -559,7 +600,7 @@ internal/code/        krn code (ast-grep structural edits)
 internal/verify/      krn verify
 internal/state/       krn state
 internal/exec/        krn exec and the explicit-input cache
-internal/eval/        krn eval (A/B harness), krn eval-suite, krn eval-pi
+internal/eval/        krn eval (A/B harness), krn eval-suite, krn eval-pi, krn eval-claude
 eval/                 eval task manifests and fixture repository
 integrations/pi/      pi extension (find_code tool, first-turn map, bounded search output)
 internal/integrate/   Codex/Claude Code routing policy, krn integrate, krn uninstall

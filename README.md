@@ -140,7 +140,8 @@ KRn does not infer undeclared dependencies. Cache safety therefore depends on ca
 
 ```text
 krn context [--json]
-krn find QUERY [--json] [--max-files N]
+krn find QUERY... [--json] [--max-files N] [--budget BYTES] [--regex]
+krn map [--tokens N] [--focus TEXT]
 krn code read|replace|insert-before|insert-after|remove --file PATH --pattern PATTERN [--lang LANG] [--content TEXT|--content-file PATH]
 krn verify [--level fast|full] [--json]
 krn state show
@@ -150,6 +151,7 @@ krn state clear
 krn exec [--verified] [--cache --input PATH ...] -- COMMAND ARGS...
 krn eval --task PATH --verify COMMAND --model MODEL --reasoning-effort EFFORT [--output DIR] [--json]
 krn eval-suite [--manifest PATH] --model MODEL --reasoning-effort EFFORT [--output DIR] [--freeze-only] [--json]
+krn eval-pi --model MODEL [--manifest PATH] [--variants none,A,AB,ABC] [--seeds N] [--tasks IDS] [--output DIR]
 krn integrate codex|remove-codex|claude|remove-claude
 krn doctor
 krn uninstall
@@ -196,6 +198,44 @@ The harness preserves each prompt, metadata, Codex JSONL stdout, stderr, verific
 The verifier is run after Codex exits in each fresh checkout. A run is verified complete only when both Codex and the explicit verifier succeed. The command is non-interactive and uses automatic approval, so human interventions are counted from explicit intervention events in the event stream; this is not a substitute for measuring an interactive operator.
 
 `benchmark.sh` remains the deterministic KRn cache-mechanism benchmark and is not replaced by this end-to-end experiment.
+
+### Local models with pi
+
+`krn find` takes plain words or identifiers. It splits identifiers (camelCase, snake_case), drops stopwords, weights terms by rarity, prefers definition lines and files that match several terms, and prints at most `--max-files` files (default 5), each with up to three hits: line number, enclosing symbol, and two lines of context. Output stays under `--budget` bytes (default 2400). `--regex` restores the old raw-pattern behaviour.
+
+`krn map` prints a signatures-only repository map for JS/TS/TSX, Python, and Go: tree-sitter definitions and references, a reference graph ranked with personalized PageRank toward `--focus` terms and dirty files, fitted to `--tokens` (default 800). Tags are cached in `.git/krn/cache/map/` by blob hash.
+
+`integrations/pi/krn.ts` is a [pi](https://github.com/earendil-works/pi) extension. Install it by copying it to `~/.pi/agent/extensions/krn/index.ts`. It has three parts. Only the map is on by default; set a variable to `1` to enable a part or `0` to disable it:
+
+* `KRN_PI_MAP` (C, default on): on the first prompt of a session, appends `krn map --focus PROMPT` as a message. It never edits the system prompt, so the KV prefix cache stays valid. It is skipped when the prompt already names a file path.
+* `KRN_PI_TOOL` (B, default off): registers a `find_code` tool backed by `krn find`.
+* `KRN_PI_BOUND` (A, default off): output from grep/find/ls or search commands run in bash, over 6000 bytes, is cut to 40 lines; the full text is saved under `.git/krn/runs/`. An empty search gets `krn find` hits for the same words appended.
+
+Every part fails open outside a Git repository or when `krn` errors.
+
+`krn eval-pi` runs pi non-interactively (`pi -p --mode json --no-session --no-extensions`) on fresh detached clones, once per variant, task, and seed. It grades the final answer against regexes and optional verify commands, and writes `results.jsonl` and `report.md`.
+
+Measured 2026-09-26 on an M4 Pro (48 GB) with NVIDIA-Nemotron-3.5-Lightning-30B-A3B-oQ4 served by oMLX: 12 tasks (9 localization questions on three real JS/TS/Go repositories, 3 fixture edit tasks from `eval/`) × 3 seeds, `eval/pi-local-manifest.json`:
+
+| variant | correct | correct/min | median wall | mean turns | find_code calls/run |
+|---|---:|---:|---:|---:|---:|
+| none | 16/36 (44%) | 0.97 | 14.7 s | 7.4 | – |
+| A | 16/36 (44%) | 0.87 | 17.2 s | 8.8 | – |
+| A+B | 22/36 (61%) | 1.11 | 21.6 s | 9.8 | 0.1 |
+| A+B+C | 29/36 (81%) | 1.64 | 23.7 s | 7.9 | 0.1 |
+
+A second run (same tasks and seeds, about 40 minutes later) measured the leaner combinations:
+
+| variant | correct | correct/min | median wall | mean turns | find_code calls/run |
+|---|---:|---:|---:|---:|---:|
+| C | 31/36 (86%) | 1.61 | 28.7 s | 7.7 | – |
+| B+C | 30/36 (83%) | 1.41 | 27.7 s | 7.6 | 0.0 |
+
+The map alone matched all three parts, so it is the only default. The model called `find_code` in about one run in ten when it was offered, and bounding output (A) alone changed nothing. On the 27 localization runs without KRn, the model answered 20 times after zero tool calls, and all 20 answers were wrong (invented files or functions); all 7 runs that used a tool were correct. The map helps because it puts evidence in context without the model having to decide to search: 9 A+B+C runs were correct with zero tool calls. This is one model, one machine, and 36 runs per variant; a gap of three or four correct answers is within seed noise.
+
+One task failed under every map variant: asked where a rest timer's end time is computed, the model cited the first line of `startRest` instead of the assignment three lines below it, and the default constant instead of the per-exercise value. That is one task out of twelve, so no map change was made for it; it is recorded here as a known weakness in precise line citation.
+
+To use it interactively, pi's `models.json` needs the served model and `settings.json` needs it as `defaultModel` (the eval passes `--provider`/`--model` and an isolated `PI_CODING_AGENT_DIR` instead). With `"reasoning": false` and a `contextWindow` no larger than the server's limit, `pi` in any Git repository gets the map on its first prompt. When scripting `pi -p`, redirect stdin (`pi -p '...' </dev/null`): pi reads piped stdin as extra prompt input and waits for it to close. `krn eval-pi` runs pi with stdin on the null device.
 
 The cache key includes the exact argv, repository root, cache schema, canonicalized dependencies, and content fingerprints of every declared input.
 
@@ -408,13 +448,15 @@ The source tree is organized by feature: each command lives in its own package, 
 cmd/krn/              command dispatch and end-to-end tests of the built binary
 internal/workspace/   shared core: repository discovery, .git/krn storage, bounded output, metrics
 internal/context/     krn context
-internal/find/        krn find
+internal/find/        krn find (ranked natural-language search)
+internal/repomap/     krn map (tree-sitter tags + personalized PageRank)
 internal/code/        krn code (ast-grep structural edits)
 internal/verify/      krn verify
 internal/state/       krn state
 internal/exec/        krn exec and the explicit-input cache
-internal/eval/        krn eval (A/B harness) and krn eval-suite
-eval/                 eval-suite task manifest and fixture repository
+internal/eval/        krn eval (A/B harness), krn eval-suite, krn eval-pi
+eval/                 eval task manifests and fixture repository
+integrations/pi/      pi extension (find_code tool, first-turn map, bounded search output)
 internal/integrate/   Codex/Claude Code routing policy, krn integrate, krn uninstall
 internal/doctor/      krn doctor
 internal/testutil/    helpers shared by tests

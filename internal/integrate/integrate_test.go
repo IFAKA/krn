@@ -131,9 +131,15 @@ func TestInstallScriptAndDirectIntegrationUseTheSamePolicy(t *testing.T) {
 	if err := os.WriteFile(fakeAstGrep, []byte("#!/bin/sh\nexit 0\n"), 0700); err != nil {
 		t.Fatal(err)
 	}
+	// HOME is redirected, so keep Go's module cache on the real one: a module
+	// cache under the temp HOME is read-only and breaks TempDir cleanup.
+	modCache, err := exec.Command("go", "env", "GOMODCACHE").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command("sh", "install.sh")
 	cmd.Dir = testutil.ModuleRoot(t)
-	cmd.Env = append(os.Environ(), "HOME="+installHome, "CODEX_HOME="+installCodexHome, "CLAUDE_CONFIG_DIR="+filepath.Join(installHome, ".claude"), "PATH="+localBin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	cmd.Env = append(os.Environ(), "GOMODCACHE="+strings.TrimSpace(string(modCache)), "HOME="+installHome, "CODEX_HOME="+installCodexHome, "CLAUDE_CONFIG_DIR="+filepath.Join(installHome, ".claude"), "PATH="+localBin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("install.sh failed: %v\n%s", err, output)
 	}

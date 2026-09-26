@@ -11,6 +11,7 @@ import (
 	"example.com/krn/internal/exec"
 	"example.com/krn/internal/find"
 	"example.com/krn/internal/integrate"
+	"example.com/krn/internal/repomap"
 	"example.com/krn/internal/state"
 	"example.com/krn/internal/verify"
 	"example.com/krn/internal/workspace"
@@ -27,6 +28,8 @@ func main() {
 		err = context.Run(os.Args[2:])
 	case "find":
 		err = find.Run(os.Args[2:])
+	case "map":
+		err = repomap.Run(os.Args[2:])
 	case "code":
 		err = code.Run(os.Args[2:])
 	case "verify":
@@ -39,6 +42,8 @@ func main() {
 		err = eval.Run(os.Args[2:])
 	case "eval-suite":
 		err = eval.RunSuite(os.Args[2:])
+	case "eval-pi":
+		err = eval.RunPi(os.Args[2:])
 	case "integrate":
 		err = integrate.Run(os.Args[2:])
 	case "doctor":
@@ -58,5 +63,5 @@ func main() {
 }
 
 func usage() {
-	fmt.Println("krn " + workspace.Version + "\nusage: krn context|find|code|verify|state|exec|eval|eval-suite|integrate|doctor|uninstall")
+	fmt.Println("krn " + workspace.Version + "\nusage: krn context|find|map|code|verify|state|exec|eval|eval-suite|eval-pi|integrate|doctor|uninstall")
 }

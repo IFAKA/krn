@@ -1,0 +1,138 @@
+{
+ "schema": "pi.v1",
+ "note": "Local-device evaluation for the pi integration. Questions are graded by answer regexes against the final reply; edits by the verify command. Ground truths were checked by reading the pinned commits.",
+ "repos": {
+  "workout": {
+   "source": "/Users/faka/code/projects/web/workout-max-snr-pwa",
+   "commit": "b16799f"
+  },
+  "finsync": {
+   "source": "/Users/faka/code/projects/finsync",
+   "commit": "9f5a414"
+  },
+  "krn": {
+   "source": "/Users/faka/code/projects/ai/krn",
+   "commit": "fbf8cef"
+  },
+  "fixture": {
+   "fixture": "eval/fixture"
+  }
+ },
+ "tasks": [
+  {
+   "id": "wk-rest",
+   "repo": "workout",
+   "category": "localize+explain",
+   "prompt": "Where is the rest countdown end time computed, and what rule decides how long the rest lasts? Cite file:line. Answer in chat only; do not create files.",
+   "answer_patterns": [
+    "timers\\.js:2[01-2]",
+    "task-factory\\.js",
+    "120"
+   ]
+  },
+  {
+   "id": "wk-persist",
+   "repo": "workout",
+   "category": "localize+explain",
+   "prompt": "How does the app save workout data, and what happens when saving fails everywhere? Name the function and file. Answer in chat only; do not create files.",
+   "answer_patterns": [
+    "storage\\.js",
+    "persist",
+    "could not be saved|throw"
+   ]
+  },
+  {
+   "id": "wk-cut",
+   "repo": "workout",
+   "category": "localize+explain",
+   "prompt": "When a session runs out of time, what decides the order in which exercises get cut? Name the function and file. Answer in chat only; do not create files.",
+   "answer_patterns": [
+    "budget\\.js",
+    "timeBudgetCutOrder|cutPriority"
+   ]
+  },
+  {
+   "id": "fs-recurring",
+   "repo": "finsync",
+   "category": "localize+explain",
+   "prompt": "How does the app decide that a transaction repeats (like a monthly subscription)? Name the function and file, and the confidence threshold it uses. Answer in chat only; do not create files.",
+   "answer_patterns": [
+    "recurring-detection\\.ts",
+    "detectRecurringPatterns",
+    "0\\.4|40 ?%"
+   ]
+  },
+  {
+   "id": "fs-sync",
+   "repo": "finsync",
+   "category": "localize+explain",
+   "prompt": "When two devices sync, how are conflicting edits to the same record resolved? Name the function and file. Answer in chat only; do not create files.",
+   "answer_patterns": [
+    "sync\\.ts",
+    "mergeChanges",
+    "last.write.wins|_lastModified|lastModified"
+   ]
+  },
+  {
+   "id": "fs-columns",
+   "repo": "finsync",
+   "category": "localize+explain",
+   "prompt": "When importing a bank statement spreadsheet, how does the app figure out which column is the date and which is the amount? Name the function and file. Answer in chat only; do not create files.",
+   "answer_patterns": [
+    "column-detector\\.ts",
+    "detectColumnMapping"
+   ]
+  },
+  {
+   "id": "krn-reuse",
+   "repo": "krn",
+   "category": "localize+explain",
+   "prompt": "How does this tool decide that a cached command result is still safe to reuse? Name the function and file. Answer in chat only; do not create files.",
+   "answer_patterns": [
+    "exec\\.go",
+    "validCacheRecord"
+   ]
+  },
+  {
+   "id": "krn-verify",
+   "repo": "krn",
+   "category": "localize+explain",
+   "prompt": "How does this tool figure out which checks to run to verify a Node.js project? Name the function and file. Answer in chat only; do not create files.",
+   "answer_patterns": [
+    "verify\\.go",
+    "discoverChecks"
+   ]
+  },
+  {
+   "id": "krn-idempotent",
+   "repo": "krn",
+   "category": "localize+explain",
+   "prompt": "If the agent integration is installed twice, what prevents the instructions block from being duplicated? Name the function and file. Answer in chat only; do not create files.",
+   "answer_patterns": [
+    "integrate\\.go",
+    "rewriteManagedBlocks|KRN:BEGIN|marker"
+   ]
+  },
+  {
+   "id": "fx-orientation",
+   "repo": "fixture",
+   "category": "edit",
+   "prompt": "Implement exactly `func Names(products []Product) []string` in catalog/catalog.go. It must return the product names in input order. Add a focused test that calls Names(Default()) and expects [\"Salmon bites\", \"Rope toy\"]. Do not ask for clarification; implement this exact API and keep existing behavior passing.",
+   "verify": "go test ./... && rg -q 'func Names' catalog/catalog.go && rg -q 'Salmon bites' catalog/catalog_test.go"
+  },
+  {
+   "id": "fx-cross-file",
+   "repo": "fixture",
+   "category": "edit",
+   "prompt": "Add exactly this third product to catalog.Default: Product{SKU: \"collar-003\", Name: \"Collar\", Price: 599}. Update TestDefaultCatalogTotal to expect 2797. Do not change the summary command; it already reads Default and must then print collar-003=599 as its last line. Keep all tests passing and do not ask for clarification.",
+   "verify": "go test ./... && test \"$(go run ./cmd/summary | tail -n 1)\" = collar-003=599"
+  },
+  {
+   "id": "fx-verification-heavy",
+   "repo": "fixture",
+   "category": "edit",
+   "prompt": "Change Total so products with negative prices contribute zero while positive prices still contribute their price. Keep the return type int. Add focused tests named TestTotalIgnoresNegative and TestTotalPositivePrices covering both cases. Keep all repository checks passing; implement directly without asking questions.",
+   "verify": "go test ./... && rg -qi 'negative' catalog/catalog_test.go"
+  }
+ ]
+}

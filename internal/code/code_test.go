@@ -36,6 +36,65 @@ func TestCodeUsesAstGrepByteRangesAndPreservesMode(t *testing.T) {
 	}
 }
 
+func TestCodeLiteralReplaceTargetsUniqueTextInEmbeddedSyntax(t *testing.T) {
+	d := t.TempDir()
+	testutil.InitRepo(t, d)
+	path := filepath.Join(d, "index.html")
+	source := "<script>\nif (e.key === \"ArrowRight\") next();\n</script>\n"
+	if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	testutil.FakeAstGrep(t, "[]")
+	testutil.Chdir(t, d)
+	if err := Run([]string{
+		"replace",
+		"--file", "index.html",
+		"--pattern", `e.key === "ArrowRight"`,
+		"--literal",
+		"--lang", "html",
+		"--content", `e.key === "ArrowRight" || e.key === "j"`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "<script>\nif (e.key === \"ArrowRight\" || e.key === \"j\") next();\n</script>\n"
+	if string(got) != want {
+		t.Fatalf("edited source = %q, want %q", got, want)
+	}
+}
+
+func TestCodeLiteralReplaceRejectsAmbiguousText(t *testing.T) {
+	d := t.TempDir()
+	testutil.InitRepo(t, d)
+	path := filepath.Join(d, "notes.txt")
+	original := "same\nsame\n"
+	if err := os.WriteFile(path, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Chdir(t, d)
+	err := Run([]string{
+		"replace",
+		"--file", "notes.txt",
+		"--pattern", "same",
+		"--literal",
+		"--lang", "text",
+		"--content", "changed",
+	})
+	if err == nil || !strings.Contains(err.Error(), "ambiguous (2 matches)") {
+		t.Fatalf("error = %v", err)
+	}
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != original {
+		t.Fatalf("source changed after ambiguous match: %q", got)
+	}
+}
+
 func TestCodeRejectsZeroMultipleInvalidAndStaleMatches(t *testing.T) {
 	d := t.TempDir()
 	testutil.InitRepo(t, d)

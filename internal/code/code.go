@@ -16,14 +16,18 @@ import (
 )
 
 type codeMatch struct {
-	Text     string `json:"text"`
-	Language string `json:"language"`
-	Range    *struct {
-		ByteOffset *struct {
-			Start int `json:"start"`
-			End   int `json:"end"`
-		} `json:"byteOffset"`
-	} `json:"range"`
+	Text     string     `json:"text"`
+	Language string     `json:"language"`
+	Range    *codeRange `json:"range"`
+}
+
+type codeRange struct {
+	ByteOffset *byteRange `json:"byteOffset"`
+}
+
+type byteRange struct {
+	Start int `json:"start"`
+	End   int `json:"end"`
 }
 
 func Run(args []string) error {
@@ -37,6 +41,7 @@ func Run(args []string) error {
 	f := workspace.FlagSet("code")
 	file := f.String("file", "", "source file")
 	pattern := f.String("pattern", "", "ast-grep structural pattern")
+	literal := f.Bool("literal", false, "match pattern as exact source text")
 	lang := f.String("lang", "", "ast-grep language")
 	content := f.String("content", "", "replacement or inserted content")
 	contentFile := f.String("content-file", "", "file containing replacement or inserted content")
@@ -66,7 +71,7 @@ func Run(args []string) error {
 		return err
 	}
 	if op == "read" {
-		match, err := resolveCodeMatch(path, source, *pattern, *lang)
+		match, err := resolveCodeMatch(path, source, *pattern, *lang, *literal)
 		if err != nil {
 			return err
 		}
@@ -83,7 +88,7 @@ func Run(args []string) error {
 	} else {
 		replacement = *content
 	}
-	diff, changed, err := editCodeFile(path, source, *pattern, *lang, op, replacement)
+	diff, changed, err := editCodeFile(path, source, *pattern, *lang, op, replacement, *literal)
 	if err != nil {
 		return err
 	}
@@ -208,7 +213,10 @@ func validateCodeEdit(path string, oldSource, newSource []byte, lang string) err
 	return nil
 }
 
-func resolveCodeMatch(path string, source []byte, pattern, lang string) (codeMatch, error) {
+func resolveCodeMatch(path string, source []byte, pattern, lang string, literal bool) (codeMatch, error) {
+	if literal {
+		return resolveLiteralMatch(source, pattern, lang)
+	}
 	matches, err := runAstGrep(path, pattern, lang)
 	if err != nil {
 		return codeMatch{}, err
@@ -233,8 +241,40 @@ func resolveCodeMatch(path string, source []byte, pattern, lang string) (codeMat
 	return match, nil
 }
 
-func editCodeFile(path string, source []byte, pattern, lang, op, replacement string) (string, bool, error) {
-	target, err := resolveCodeMatch(path, source, pattern, lang)
+func resolveLiteralMatch(source []byte, pattern, lang string) (codeMatch, error) {
+	needle := []byte(pattern)
+	if len(needle) == 0 {
+		return codeMatch{}, errors.New("literal pattern must not be empty")
+	}
+	var offsets []int
+	for from := 0; from <= len(source)-len(needle); {
+		relative := bytes.Index(source[from:], needle)
+		if relative < 0 {
+			break
+		}
+		start := from + relative
+		offsets = append(offsets, start)
+		from = start + 1
+	}
+	if len(offsets) == 0 {
+		return codeMatch{}, fmt.Errorf("literal pattern %q matched no text", pattern)
+	}
+	if len(offsets) != 1 {
+		return codeMatch{}, fmt.Errorf("literal pattern %q is ambiguous (%d matches)", pattern, len(offsets))
+	}
+	start := offsets[0]
+	return codeMatch{
+		Text:     pattern,
+		Language: lang,
+		Range: &codeRange{ByteOffset: &byteRange{
+			Start: start,
+			End:   start + len(needle),
+		}},
+	}, nil
+}
+
+func editCodeFile(path string, source []byte, pattern, lang, op, replacement string, literal bool) (string, bool, error) {
+	target, err := resolveCodeMatch(path, source, pattern, lang, literal)
 	if err != nil {
 		return "", false, err
 	}

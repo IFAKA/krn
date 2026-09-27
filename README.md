@@ -88,7 +88,7 @@ The agent sees a short result, and the full output is saved to a log it can open
 | `krn map [--focus TEXT] [--tokens N]` | ranked, signatures-only repository map |
 | `krn find WORDS... [--max-files N]` | plain-word search, ranked, with context (`--regex` for raw patterns) |
 | `krn context` | repository root, branch, commit, changed files, detected ecosystems, saved task state |
-| `krn code read\|replace\|insert-before\|insert-after\|remove` | structural edit through ast-grep; the pattern must match exactly once, and the file is written only if the result still parses |
+| `krn code read\|replace\|insert-before\|insert-after\|remove` | structural or exact-text edit; the target must match exactly once, and the file is written only if the result still parses |
 | `krn verify [--level fast\|full]` | runs the project's own checks (Go, npm, Cargo, pytest, or `.kern/config.json`); reports `unknown` if it finds none, rather than inventing a command |
 | `krn exec [--cache --input PATH...] -- CMD` | runs a command with bounded output; with `--cache`, reuses the last result while the declared inputs are unchanged |
 | `krn state show\|set\|add\|clear` | a few durable task facts: objective, constraints, proven facts, open questions, dead ends |

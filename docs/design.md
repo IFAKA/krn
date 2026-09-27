@@ -68,7 +68,7 @@ The main path is conservative: KRn reconstructs what it can, gathers bounded evi
 * `context` reconstructs Git root, branch, commit, changed paths, detected ecosystems, and saved task state.
 * `find` turns plain words or identifiers into ripgrep searches, ranks files, returns a bounded file/snippet projection, and saves the full search output for recovery.
 * `map` parses source files with tree-sitter and prints a ranked, signatures-only repository map fitted to a token budget.
-* `code` applies ast-grep structural edits whose pattern must match exactly once.
+* `code` applies ast-grep structural edits or opt-in exact-text edits whose target must match exactly once.
 * `verify` discovers safe project-native checks from `.kern/config.json`, `package.json`, Go, Cargo, or pytest. Unknown projects remain `unknown`; KRn does not invent a command.
 * `exec` runs structured local commands, bounds output shown to the caller, records metrics, and can cache executions only when explicit input dependencies are supplied.
 * Cached executions are reused only when their command, repository provenance, schema, declared dependencies, dependency fingerprints, metadata, and result integrity remain valid.

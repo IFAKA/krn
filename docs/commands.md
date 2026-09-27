@@ -61,7 +61,7 @@ Unknown side effects are never inferred safe. Callers must declare the complete 
 
 `--verified` is an external assertion recorded with an execution. It is not proof of command purity or complete dependency coverage.
 
-## Structural code edits
+## Deterministic code edits
 
 `krn code` is a language-independent mechanical interface backed by the externally maintained `ast-grep` CLI. The installer provisions ast-grep into the user-local environment when it is missing. If KRn is installed another way, install ast-grep separately and put it on `PATH`. Patterns are structural ast-grep patterns, and language is inferred from the file extension unless `--lang` is supplied:
 
@@ -73,7 +73,15 @@ krn code insert-after --file .gitlab-ci.yml --lang yaml --pattern 'build: { $$$J
 krn code remove --file styles.scss --lang css --pattern '$COLOR: red;'
 ```
 
-The pattern must resolve to exactly one match. Missing, ambiguous, unsupported, unavailable-grammar, malformed, stale, or invalid targets fail with a non-zero status and leave the file unchanged. KRn verifies ast-grep's UTF-8 byte range against the local source, rejects the edit if the candidate has more tree-sitter `ERROR` nodes than the original (so files with pre-existing errors stay editable), additionally parses `.go` results with Go's standard parser, generates a unified diff, and writes atomically only after validation. Tree-sitter recovers silently from some truncated input, such as a missing closing brace in TypeScript or an unterminated `if` in Bash, so this check is not a full syntax guarantee outside Go. Repeating an insert with identical adjacent content is a no-op. It preserves unrelated source bytes and does not format or semantically interpret code.
+When a parser does not expose the intended target as a structural node, `--literal` interprets the pattern as exact source text instead. This is useful for embedded or unsupported syntax and other unique, mechanical text changes:
+
+```sh
+krn code replace --file page.html --literal --lang html --pattern 'oldValue' --content 'newValue'
+```
+
+Literal patterns follow the same exactly-once rule. Mutating literal operations require `--lang` so KRn can validate the resulting source; `read --literal` does not.
+
+The pattern must resolve to exactly one match. Missing, ambiguous, unsupported, unavailable-grammar, malformed, stale, or invalid targets fail with a non-zero status and leave the file unchanged. For structural patterns, KRn verifies ast-grep's UTF-8 byte range against the local source. For literal patterns, it finds the unique byte span directly. KRn rejects the edit if the candidate has more tree-sitter `ERROR` nodes than the original (so files with pre-existing errors stay editable), additionally parses `.go` results with Go's standard parser, generates a unified diff, and writes atomically only after validation. Tree-sitter recovers silently from some truncated input, such as a missing closing brace in TypeScript or an unterminated `if` in Bash, so this check is not a full syntax guarantee outside Go. Repeating an insert with identical adjacent content is a no-op. It preserves unrelated source bytes and does not format or semantically interpret code.
 
 This boundary is intentional: the model decides the structural pattern, content, and semantic intent; KRn resolves the external match, performs the byte-span transformation, validates the candidate, and exposes the resulting diff. Examples can target TypeScript, JavaScript, Bash, YAML/GitLab CI, Go, CSS, and CSS-compatible SCSS. The installed ast-grep grammar set determines the available language names; for example, current ast-grep releases provide `css` but may not provide a separate `scss` grammar, so unsupported `--lang` values fail cleanly. KRn does not maintain language grammars or syntax-version tables; parser and grammar updates belong to ast-grep and Tree-sitter tooling. Semantic validation, compilation, formatting, and type checking remain repository-native concerns. Run `go test ./...` and the repository's verification checks after edits.
 

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"example.com/krn/internal/workspace"
@@ -246,18 +247,14 @@ func resolveLiteralMatch(source []byte, pattern, lang string) (codeMatch, error)
 	if len(needle) == 0 {
 		return codeMatch{}, errors.New("literal pattern must not be empty")
 	}
-	var offsets []int
-	for from := 0; from <= len(source)-len(needle); {
-		relative := bytes.Index(source[from:], needle)
-		if relative < 0 {
-			break
-		}
-		start := from + relative
-		offsets = append(offsets, start)
-		from = start + 1
-	}
+	offsets := literalMatchOffsets(source, needle)
 	if len(offsets) == 0 {
-		return codeMatch{}, fmt.Errorf("literal pattern %q matched no text", pattern)
+		err := fmt.Errorf("literal pattern %q matched no text", pattern)
+		decoded, ok := decodeBackslashEscapes(pattern)
+		if ok && len(literalMatchOffsets(source, []byte(decoded))) == 1 {
+			return codeMatch{}, fmt.Errorf("%w; after decoding backslash escapes, the pattern matches exactly once; pass the decoded characters directly or adjust shell quoting", err)
+		}
+		return codeMatch{}, err
 	}
 	if len(offsets) != 1 {
 		return codeMatch{}, fmt.Errorf("literal pattern %q is ambiguous (%d matches)", pattern, len(offsets))
@@ -271,6 +268,45 @@ func resolveLiteralMatch(source []byte, pattern, lang string) (codeMatch, error)
 			End:   start + len(needle),
 		}},
 	}, nil
+}
+
+func literalMatchOffsets(source, needle []byte) []int {
+	var offsets []int
+	for from := 0; from <= len(source)-len(needle); {
+		relative := bytes.Index(source[from:], needle)
+		if relative < 0 {
+			break
+		}
+		start := from + relative
+		offsets = append(offsets, start)
+		from = start + 1
+	}
+	return offsets
+}
+
+func decodeBackslashEscapes(pattern string) (string, bool) {
+	rest := pattern
+	var decoded strings.Builder
+	decoded.Grow(len(pattern))
+	for len(rest) > 0 {
+		if rest[0] != '\\' {
+			decoded.WriteByte(rest[0])
+			rest = rest[1:]
+			continue
+		}
+		value, multibyte, tail, err := strconv.UnquoteChar(rest, '"')
+		if err != nil {
+			return "", false
+		}
+		if multibyte {
+			decoded.WriteRune(value)
+		} else {
+			decoded.WriteByte(byte(value))
+		}
+		rest = tail
+	}
+	result := decoded.String()
+	return result, result != pattern
 }
 
 func editCodeFile(path string, source []byte, pattern, lang, op, replacement string, literal bool) (string, bool, error) {

@@ -1,6 +1,7 @@
 package code
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -92,6 +93,90 @@ func TestCodeLiteralReplaceRejectsAmbiguousText(t *testing.T) {
 	}
 	if string(got) != original {
 		t.Fatalf("source changed after ambiguous match: %q", got)
+	}
+}
+
+func TestLiteralNoMatchHintsWhenDecodedEscapesMatchExactlyOnce(t *testing.T) {
+	tests := []struct {
+		name    string
+		source  string
+		pattern string
+	}{
+		{name: "unicode apostrophes", source: `'open'`, pattern: `\u0027open\u0027`},
+		{name: "escaped quotes", source: `say "hello"`, pattern: `say \"hello\"`},
+		{name: "escaped backslash", source: `path\name`, pattern: `path\\name`},
+		{name: "newline", source: "first\nsecond", pattern: `first\nsecond`},
+		{name: "tab", source: "key\tvalue", pattern: `key\tvalue`},
+		{name: "hex and unicode", source: "A λ 🙂", pattern: `\x41 \u03bb \U0001F642`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := resolveLiteralMatch([]byte(tt.source), tt.pattern, "text")
+			if err == nil || !strings.Contains(err.Error(), "after decoding backslash escapes, the pattern matches exactly once; pass the decoded characters directly or adjust shell quoting") {
+				t.Fatalf("error = %v", err)
+			}
+		})
+	}
+}
+
+func TestLiteralNoMatchKeepsOrdinaryErrorWhenDecodedCandidateIsNotUnique(t *testing.T) {
+	tests := []struct {
+		name    string
+		source  string
+		pattern string
+	}{
+		{name: "malformed escape", source: `'open'`, pattern: `\uZZZZ`},
+		{name: "unrelated decoded pattern", source: `'open'`, pattern: `\u0027closed\u0027`},
+		{name: "ambiguous decoded pattern", source: "'open' and 'open'", pattern: `\u0027open\u0027`},
+		{name: "unchanged pattern", source: `'open'`, pattern: `missing`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := resolveLiteralMatch([]byte(tt.source), tt.pattern, "text")
+			want := fmt.Sprintf("literal pattern %q matched no text", tt.pattern)
+			if err == nil || err.Error() != want {
+				t.Fatalf("error = %v, want %q", err, want)
+			}
+		})
+	}
+}
+
+func TestLiteralEscapeHintDoesNotChangeFailedMutation(t *testing.T) {
+	d := t.TempDir()
+	testutil.InitRepo(t, d)
+	path := filepath.Join(d, "notes.txt")
+	original := "status = 'open'\n"
+	if err := os.WriteFile(path, []byte(original), 0600); err != nil {
+		t.Fatal(err)
+	}
+	testutil.Chdir(t, d)
+	err := Run([]string{
+		"replace",
+		"--file", "notes.txt",
+		"--pattern", `\u0027open\u0027`,
+		"--literal",
+		"--lang", "text",
+		"--content", "closed",
+	})
+	if err == nil || !strings.Contains(err.Error(), "after decoding backslash escapes, the pattern matches exactly once") {
+		t.Fatalf("error = %v", err)
+	}
+	got, readErr := os.ReadFile(path)
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(got) != original {
+		t.Fatalf("source changed after failed escaped match: %q", got)
+	}
+}
+
+func TestLiteralValidPatternStillMatchesUnchanged(t *testing.T) {
+	match, err := resolveLiteralMatch([]byte("before 'open' after"), `'open'`, "text")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if match.Text != `'open'` || match.Range.ByteOffset.Start != 7 || match.Range.ByteOffset.End != 13 {
+		t.Fatalf("match = %+v", match)
 	}
 }
 
